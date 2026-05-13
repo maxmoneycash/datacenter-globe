@@ -3,6 +3,7 @@ import GlobeGL from 'react-globe.gl';
 import * as THREE from 'three';
 import type { CountryStat, Datacenter } from './types';
 import { BUCKET_COLORS, bucketFor, normalizeCountry } from './constants';
+import { useIsTouch } from './useIsMobile';
 
 interface GlobeProps {
   datacenters: Datacenter[];
@@ -73,6 +74,7 @@ const Globe: React.FC<GlobeProps> = ({
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoveredPin, setHoveredPin] = useState<{ dc: Datacenter; sx: number; sy: number } | null>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const isTouch = useIsTouch();
 
   // Unlit MeshBasicMaterial — no lighting calculations at all. Big perf win over
   // MeshPhysicalMaterial (no clearcoat pass, no per-fragment specular/diffuse).
@@ -266,6 +268,9 @@ const Globe: React.FC<GlobeProps> = ({
   useEffect(() => {
     if (!globeRef.current) return;
     if (datacenters.length === 0) return;
+    // Skip the per-pin raycaster on touch devices — there's no hover concept,
+    // and the raycaster would otherwise fire on every drag/scroll touch event.
+    if (isTouch) return;
     const renderer = globeRef.current.renderer?.();
     const camera = globeRef.current.camera?.();
     if (!renderer || !camera) return;
@@ -323,7 +328,7 @@ const Globe: React.FC<GlobeProps> = ({
       canvas.removeEventListener('pointerleave', onPointerLeave);
       if (rafId) cancelAnimationFrame(rafId);
     };
-  }, [datacenters]);
+  }, [datacenters, isTouch]);
 
   const polygonBaseColorMap = useMemo(() => {
     const map = new WeakMap<object, string>();

@@ -4,6 +4,7 @@ import { geoMercator, geoPath, geoArea } from 'd3-geo';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Datacenter, CountryStat } from './types';
 import { normalizeCountry } from './constants';
+import { useIsMobile } from './useIsMobile';
 
 interface Props {
   countryName: string;
@@ -153,21 +154,25 @@ const CountryPanel: React.FC<Props> = ({
   );
   const onRowSelect = useCallback((dc: Datacenter) => setSelectedDc(dc), []);
 
-  const mapLeft = LEFT_PANEL_WIDTH;
-  const mapWidth = Math.max(400, width - LEFT_PANEL_WIDTH);
-  const mapHeight = height;
+  const isMobile = useIsMobile();
+
+  // Layout: desktop = sidebar on left, map fills the rest. Mobile = map at the
+  // top (~55vh), sidebar list scrolls under it.
+  const mapLeft = isMobile ? 0 : LEFT_PANEL_WIDTH;
+  const mapWidth = isMobile ? width : Math.max(400, width - LEFT_PANEL_WIDTH);
+  const mapHeight = isMobile ? Math.round(height * 0.55) : height;
 
   const { fullPathD, mainlandPathD, pins } = useMemo(() => {
     if (!feature || !projectionFeature) {
       return { fullPathD: '', mainlandPathD: '', pins: [] as { x: number; y: number; dc: Datacenter }[] };
     }
-    const padX = 60;
-    const padTop = 80;
-    const padBottom = 60;
+    const padX = isMobile ? 24 : 60;
+    const padTop = isMobile ? 84 : 80;
+    const padBottom = isMobile ? 12 : 60;
     const proj = geoMercator().fitExtent(
       [
         [mapLeft + padX, padTop],
-        [width - padX, mapHeight - padBottom],
+        [mapLeft + mapWidth - padX, mapHeight - padBottom],
       ],
       projectionFeature
     );
@@ -185,11 +190,15 @@ const CountryPanel: React.FC<Props> = ({
       mainlandPathD: path(projectionFeature) || '',
       pins: ps,
     };
-  }, [feature, projectionFeature, inCountry, mapLeft, mapWidth, mapHeight, width]);
+  }, [feature, projectionFeature, inCountry, mapLeft, mapWidth, mapHeight, isMobile]);
 
   // Outlying-territory pins (those outside the mainland fit) — render at edge as "off-map" markers
   const visiblePins = pins.filter(
-    (p) => p.x >= mapLeft - 10 && p.x <= width + 10 && p.y >= -10 && p.y <= height + 10
+    (p) =>
+      p.x >= mapLeft - 10 &&
+      p.x <= mapLeft + mapWidth + 10 &&
+      p.y >= -10 &&
+      p.y <= mapHeight + 10
   );
   const offMapCount = pins.length - visiblePins.length;
 
@@ -202,9 +211,9 @@ const CountryPanel: React.FC<Props> = ({
       className="absolute inset-0 z-20 bg-black/95 backdrop-blur-xl"
     >
       <motion.svg
-        width={width}
-        height={height}
-        className="absolute inset-0"
+        width={isMobile ? width : width}
+        height={isMobile ? mapHeight : height}
+        className="absolute top-0 left-0"
         initial={{ scale: 0.92, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
@@ -264,25 +273,38 @@ const CountryPanel: React.FC<Props> = ({
         })}
       </motion.svg>
 
-      {/* Left stats panel — scrolling list of every datacenter in this country */}
+      {/* Left stats panel — desktop: side column. Mobile: stacks under the map. */}
       <motion.aside
-        initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
+        initial={isMobile ? { opacity: 0, y: 30 } : { opacity: 0, x: -20 }}
+        animate={isMobile ? { opacity: 1, y: 0 } : { opacity: 1, x: 0 }}
         transition={{ delay: 0.15, duration: 0.4 }}
-        className="absolute top-0 left-0 h-full pointer-events-auto flex flex-col bg-black/70 backdrop-blur-md border-r border-white/5"
-        style={{ width: LEFT_PANEL_WIDTH }}
+        className={`absolute pointer-events-auto flex flex-col bg-black/85 backdrop-blur-md ${
+          isMobile
+            ? 'left-0 right-0 border-t border-white/10'
+            : 'top-0 left-0 h-full border-r border-white/5'
+        }`}
+        style={
+          isMobile
+            ? { top: mapHeight, bottom: 0 }
+            : { width: LEFT_PANEL_WIDTH }
+        }
       >
-        {/* Fixed header */}
-        <div className="px-6 pt-20 pb-4 border-b border-white/5">
-          <div className="font-mono text-xs uppercase tracking-widest text-seismic-orange flex items-center gap-2">
+        {/* Fixed header — compact on mobile, no longer needs to clear the
+            back button since the map is above it. */}
+        <div className={`border-b border-white/5 ${isMobile ? 'px-4 pt-3 pb-2' : 'px-6 pt-20 pb-4'}`}>
+          <div className="font-mono text-[10px] uppercase tracking-widest text-seismic-orange flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-seismic-orange" />
             {stat?.count.toLocaleString() ?? 0} datacenters
           </div>
-          <h2 className="font-sans text-3xl font-light tracking-tighter mt-1 leading-tight">
+          <h2
+            className={`font-sans font-light tracking-tighter leading-tight ${
+              isMobile ? 'text-xl mt-0.5' : 'text-3xl mt-1'
+            }`}
+          >
             {countryName}
           </h2>
           {offMapCount > 0 && (
-            <div className="mt-1 font-mono text-[10px] text-white/35 uppercase tracking-widest">
+            <div className="mt-1 font-mono text-[9px] text-white/35 uppercase tracking-widest">
               +{offMapCount} off-map territories
             </div>
           )}
@@ -302,20 +324,29 @@ const CountryPanel: React.FC<Props> = ({
           ))}
         </div>
 
-        <div className="px-6 py-3 border-t border-white/5 font-mono text-[10px] text-white/35 uppercase tracking-widest">
-          Click any site for full details
+        <div
+          className={`border-t border-white/5 font-mono text-[10px] text-white/35 uppercase tracking-widest pb-safe ${
+            isMobile ? 'px-4 py-2' : 'px-6 py-3'
+          }`}
+        >
+          {isMobile ? 'Tap any site for details' : 'Click any site for full details'}
         </div>
       </motion.aside>
 
-      {/* Back button */}
+      {/* Back button — bigger tap target on mobile, anchored to safe area */}
       <motion.button
         onClick={onClose}
         initial={{ opacity: 0, x: -8 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.3 }}
-        className="absolute top-6 left-6 z-30 font-mono text-xs uppercase tracking-widest text-white/60 hover:text-seismic-orange transition-colors pointer-events-auto bg-black/60 px-3 py-1.5 rounded border border-white/10"
+        className={`absolute z-30 font-mono uppercase tracking-widest text-white/70 hover:text-seismic-orange transition-colors pointer-events-auto bg-black/70 backdrop-blur-md border border-white/10 rounded-full ${
+          isMobile
+            ? 'top-3 left-3 text-[11px] px-3 py-2'
+            : 'top-6 left-6 text-xs px-3 py-1.5 rounded'
+        }`}
+        style={isMobile ? { marginTop: 'env(safe-area-inset-top)' } : undefined}
       >
-        ← Back to globe
+        ← Back{isMobile ? '' : ' to globe'}
       </motion.button>
 
       {/* Hover tooltip — follows cursor near the pin */}
@@ -368,17 +399,29 @@ const CountryPanel: React.FC<Props> = ({
         )}
       </AnimatePresence>
 
-      {/* Selected datacenter full card */}
+      {/* Selected datacenter full card.
+          Desktop: floats top-right.
+          Mobile: full-width bottom sheet that slides up from below. */}
       <AnimatePresence>
         {selectedDc && (
           <motion.div
             key={selectedDc.name + selectedDc.address}
-            initial={{ opacity: 0, y: 12, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.95 }}
-            transition={{ duration: 0.2 }}
-            className="absolute top-24 right-8 w-[340px] bg-black/85 backdrop-blur-xl border border-white/15 rounded-lg shadow-2xl z-30 overflow-hidden pointer-events-auto"
+            initial={isMobile ? { y: '100%' } : { opacity: 0, y: 12, scale: 0.95 }}
+            animate={isMobile ? { y: 0 } : { opacity: 1, y: 0, scale: 1 }}
+            exit={isMobile ? { y: '100%' } : { opacity: 0, y: 12, scale: 0.95 }}
+            transition={{ duration: isMobile ? 0.28 : 0.2, ease: [0.32, 0.72, 0, 1] }}
+            className={`bg-black/95 backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden pointer-events-auto z-50 ${
+              isMobile
+                ? 'fixed left-0 right-0 bottom-0 rounded-t-2xl border-b-0 max-h-[80vh] overflow-y-auto'
+                : 'absolute top-24 right-8 w-[340px] rounded-lg'
+            }`}
+            style={isMobile ? { paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
           >
+            {isMobile && (
+              <div className="flex justify-center pt-2 pb-1">
+                <div className="w-10 h-1 rounded-full bg-white/20" />
+              </div>
+            )}
             <div className="p-4 border-b border-white/10 flex justify-between items-start bg-white/5">
               <div className="flex-1 min-w-0">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-seismic-orange mb-1">

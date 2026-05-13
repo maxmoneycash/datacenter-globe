@@ -8,6 +8,7 @@ import Globe from './Globe';
 import Legend from './Legend';
 import FpsCounter from './FpsCounter';
 import CountryPanel from './CountryPanel';
+import { useIsMobile } from './useIsMobile';
 import type { Datacenter, CountryStat } from './types';
 
 const TourApp = dynamic(() => import('@/src/tour/TourApp'), {
@@ -29,6 +30,7 @@ const GlobeDashboard: React.FC = () => {
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [tourDc, setTourDc] = useState<Datacenter | null>(null);
   const [viewport, setViewport] = useState({ w: 1440, h: 900 });
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     setViewport({ w: window.innerWidth, h: window.innerHeight });
@@ -95,37 +97,65 @@ const GlobeDashboard: React.FC = () => {
         selectedCountryName={selectedCountry}
       />
 
-      <div className="absolute top-0 left-0 w-full p-6 pointer-events-none flex justify-between items-start z-10">
+      {/* HUD header — condensed on mobile so it doesn't overlap the globe */}
+      <div
+        className={`absolute top-0 left-0 w-full pointer-events-none flex justify-between items-start z-10 ${
+          isMobile ? 'p-3 pt-safe' : 'p-6'
+        }`}
+      >
         <div>
           <h1
-            className="text-4xl font-thin tracking-tighter text-white drop-shadow-lg"
+            className={`${isMobile ? 'text-lg' : 'text-4xl'} font-thin tracking-tighter text-white drop-shadow-lg`}
             style={{ fontFamily: 'Space Grotesk, sans-serif' }}
           >
             GLOBAL <span className="font-bold" style={{ color: '#ff9f43' }}>DATACENTERS</span>
           </h1>
           <div
-            className="flex items-center gap-2 mt-2 text-sm text-gray-400 bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto"
+            className={`flex items-center gap-1.5 mt-1 ${
+              isMobile ? 'text-[9px] px-2 py-0.5' : 'text-sm mt-2 px-3 py-1'
+            } text-gray-400 bg-black/40 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto`}
             style={{ fontFamily: 'JetBrains Mono, monospace' }}
           >
-            <Activity size={14} className="animate-pulse" style={{ color: '#ff4d4d' }} />
-            <span>{loading ? 'INITIALIZING DATA…' : 'LATEST AVAILABLE DATA: GLOBAL DATA CENTER REGISTRY'}</span>
+            <Activity size={isMobile ? 10 : 14} className="animate-pulse" style={{ color: '#ff4d4d' }} />
+            <span>
+              {loading
+                ? 'INITIALIZING DATA…'
+                : isMobile
+                ? `${totalSites.toLocaleString()} SITES · ${totalCountries} COUNTRIES`
+                : 'LATEST AVAILABLE DATA: GLOBAL DATA CENTER REGISTRY'}
+            </span>
           </div>
         </div>
 
-        <div className="pointer-events-auto">
-          <FpsCounter />
+        {!isMobile && (
+          <div className="pointer-events-auto">
+            <FpsCounter />
+          </div>
+        )}
+      </div>
+
+      {/* Legend hidden on mobile — too crowded. Stats shown in header instead. */}
+      {!isMobile && <Legend totalSites={totalSites} totalCountries={totalCountries} />}
+
+      {!isMobile && (
+        <div
+          className="absolute bottom-6 right-6 z-10 flex flex-col items-end gap-1 text-xs text-white/30 tracking-widest pointer-events-none select-none uppercase"
+          style={{ fontFamily: 'JetBrains Mono, monospace' }}
+        >
+          <span>Data Source: Ringmast4r / Global-Data-Center-Map</span>
+          <span>DC Intelligence</span>
         </div>
-      </div>
+      )}
 
-      <Legend totalSites={totalSites} totalCountries={totalCountries} />
-
-      <div
-        className="absolute bottom-6 right-6 z-10 flex flex-col items-end gap-1 text-xs text-white/30 tracking-widest pointer-events-none select-none uppercase"
-        style={{ fontFamily: 'JetBrains Mono, monospace' }}
-      >
-        <span>Data Source: Ringmast4r / Global-Data-Center-Map</span>
-        <span>DC Intelligence</span>
-      </div>
+      {/* Mobile-only hint: how to interact */}
+      {isMobile && !loading && !selectedCountry && (
+        <div
+          className="absolute z-10 left-1/2 -translate-x-1/2 bottom-safe mb-3 pointer-events-none uppercase tracking-widest text-[9px] text-white/45"
+          style={{ fontFamily: 'JetBrains Mono, monospace' }}
+        >
+          Drag to rotate · pinch to zoom · tap a country
+        </div>
+      )}
 
       <AnimatePresence>
         {selectedCountry && !tourDc && (
