@@ -113,11 +113,12 @@ const Globe: React.FC<GlobeProps> = ({ datacenters, countryStats, onCountryClick
 
   const getStat = (d: any): CountryStat | undefined => countryStats.get(featureName(d));
 
-  // High-contrast white markers — visible on any country surface.
+  // Bright cyan markers — visible on every density color (red/orange/yellow/green/gray)
+  // and also on the white-hover state. Matches the globe's cyan specular accent.
   const points = useMemo(() => {
     return datacenters.map((dc) => {
       const [lat, lng] = dc.city_coords!;
-      return { lat, lng, color: '#ffffff', country: dc.country, dc };
+      return { lat, lng, color: '#00f0ff', country: dc.country, dc };
     });
   }, [datacenters]);
 
@@ -186,8 +187,8 @@ const Globe: React.FC<GlobeProps> = ({ datacenters, countryStats, onCountryClick
         pointLng="lng"
         pointColor="color"
         pointAltitude={BASE_POINT_ALT}
-        pointRadius={0.22}
-        pointResolution={3}
+        pointRadius={0.32}
+        pointResolution={4}
         pointsMerge={true}
         pointsTransitionDuration={0}
       />
