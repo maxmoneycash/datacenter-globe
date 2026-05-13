@@ -19,10 +19,10 @@ interface Props {
 // Reserve a fixed left column for the stats panel; the map takes the rest.
 const LEFT_PANEL_WIDTH = 340;
 
-// Pin visual + invisible hit zone radii.
-const PIN_R = 4;
-const PIN_R_HOVER = 6;
-const PIN_HITBOX_R = 12;
+// Emoji marker font sizes + invisible hit zone radius.
+const PIN_FONT_SIZE = 16;
+const PIN_FONT_SIZE_HOVER = 22;
+const PIN_HITBOX_R = 14;
 
 const CountryPanel: React.FC<Props> = ({
   countryName,
@@ -157,27 +157,34 @@ const CountryPanel: React.FC<Props> = ({
           />
         )}
 
-        {/* Pins — solid dot + invisible hit zone, no halo */}
+        {/* 📡 emoji markers — matches the world-globe view. Invisible hit zone. */}
         {visiblePins.map((p, i) => {
           const isActive = selectedDc === p.dc || hoverDc === p.dc;
           return (
             <g key={i}>
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={isActive ? PIN_R_HOVER : PIN_R}
-                fill={isActive ? '#facc15' : '#ff4d4d'}
-                stroke={isActive ? '#fff' : '#1a0a00'}
-                strokeWidth={isActive ? 1.5 : 0.6}
-                style={{ pointerEvents: 'none', transition: 'r 120ms ease, fill 120ms ease' }}
-              />
+              <text
+                x={p.x}
+                y={p.y}
+                fontSize={isActive ? PIN_FONT_SIZE_HOVER : PIN_FONT_SIZE}
+                textAnchor="middle"
+                dominantBaseline="central"
+                style={{
+                  pointerEvents: 'none',
+                  filter: isActive
+                    ? 'drop-shadow(0 0 6px rgba(255,159,67,0.9))'
+                    : 'drop-shadow(0 0 2px rgba(0,0,0,0.85))',
+                  transition: 'font-size 120ms ease',
+                }}
+              >
+                📡
+              </text>
               <circle
                 cx={p.x}
                 cy={p.y}
                 r={PIN_HITBOX_R}
                 fill="transparent"
                 style={{ cursor: 'pointer' }}
-                onMouseEnter={(e) => {
+                onMouseEnter={() => {
                   setHoverDc(p.dc);
                   setHoverPos({ x: p.x, y: p.y });
                 }}
