@@ -13,9 +13,9 @@ interface GlobeProps {
   selectedCountryName?: string | null;
 }
 
-// Sits above the hovered polygon's lift altitude (0.06) so pins are never
-// occluded when the country surface rises on hover.
-const BASE_POINT_ALT = 0.075;
+// Flat dots sitting just above the polygon cap. Polygon altitude is static
+// (no hover lift) so dots are never occluded by a rising surface.
+const BASE_POINT_ALT = 0.012;
 
 function featureName(d: any): string {
   return normalizeCountry(d?.properties?.ADMIN || d?.properties?.NAME || d?.properties?.name || d?.properties?.admin || '');
@@ -142,10 +142,7 @@ const Globe: React.FC<GlobeProps> = ({ datacenters, countryStats, onCountryClick
         backgroundColor="#000000"
         globeMaterial={customGlobeMaterial}
         polygonsData={countries.features}
-        polygonAltitude={(d: any) => {
-          const isSelected = selectedCountryName === featureName(d);
-          return d === hoverD || isSelected ? 0.06 : 0.01;
-        }}
+        polygonAltitude={0.01}
         polygonCapColor={(d: any) => {
           const isSelected = selectedCountryName === featureName(d);
           if (d === hoverD || isSelected) return '#ffffff';
@@ -189,7 +186,7 @@ const Globe: React.FC<GlobeProps> = ({ datacenters, countryStats, onCountryClick
         pointLng="lng"
         pointColor="color"
         pointAltitude={BASE_POINT_ALT}
-        pointRadius={0.32}
+        pointRadius={0.4}
         pointResolution={4}
         pointsMerge={true}
         pointsTransitionDuration={0}
