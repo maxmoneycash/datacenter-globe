@@ -115,12 +115,12 @@ const Globe: React.FC<GlobeProps> = ({ datacenters, countryStats, onCountryClick
 
   const getStat = (d: any): CountryStat | undefined => countryStats.get(featureName(d));
 
-  // Bright cyan markers — visible on every density color (red/orange/yellow/green/gray)
-  // and also on the white-hover state. Matches the globe's cyan specular accent.
-  const points = useMemo(() => {
+  // 📡 satellite-dish markers. HTML elements render in a 2D overlay above the
+  // canvas — they're always on top of any polygon color/state, no z-fighting.
+  const markers = useMemo(() => {
     return datacenters.map((dc) => {
       const [lat, lng] = dc.city_coords!;
-      return { lat, lng, color: '#00f0ff', country: dc.country, dc };
+      return { lat, lng, country: dc.country, dc };
     });
   }, [datacenters]);
 
@@ -142,7 +142,10 @@ const Globe: React.FC<GlobeProps> = ({ datacenters, countryStats, onCountryClick
         backgroundColor="#000000"
         globeMaterial={customGlobeMaterial}
         polygonsData={countries.features}
-        polygonAltitude={0.01}
+        polygonAltitude={(d: any) => {
+          const isSelected = selectedCountryName === featureName(d);
+          return d === hoverD || isSelected ? 0.06 : 0.01;
+        }}
         polygonCapColor={(d: any) => {
           const isSelected = selectedCountryName === featureName(d);
           if (d === hoverD || isSelected) return '#ffffff';
@@ -181,15 +184,23 @@ const Globe: React.FC<GlobeProps> = ({ datacenters, countryStats, onCountryClick
         showAtmosphere={true}
         atmosphereColor="#8b5cf6"
         atmosphereAltitude={0.15}
-        pointsData={points}
-        pointLat="lat"
-        pointLng="lng"
-        pointColor="color"
-        pointAltitude={BASE_POINT_ALT}
-        pointRadius={0.4}
-        pointResolution={4}
-        pointsMerge={true}
-        pointsTransitionDuration={0}
+        htmlElementsData={markers}
+        htmlLat="lat"
+        htmlLng="lng"
+        htmlAltitude={BASE_POINT_ALT}
+        htmlElement={() => {
+          const el = document.createElement('div');
+          el.textContent = '📡';
+          el.style.fontSize = '12px';
+          el.style.lineHeight = '1';
+          el.style.userSelect = 'none';
+          // Don't block country clicks — pin clicks still happen via flat-map view
+          el.style.pointerEvents = 'none';
+          el.style.transform = 'translate(-50%, -50%)';
+          el.style.filter = 'drop-shadow(0 0 2px rgba(0,0,0,0.8))';
+          return el;
+        }}
+        htmlTransitionDuration={0}
       />
     </div>
   );
