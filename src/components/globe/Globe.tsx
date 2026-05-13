@@ -14,11 +14,11 @@ interface GlobeProps {
 }
 
 const POLYGON_BASE_ALT = 0.01;
-const POLYGON_HOVER_ALT = 0.06;
-const GLOBE_RADIUS = 100;       // three-globe internal radius
-const PIN_RADIUS_BASE = 100.6;  // pin layer just above base polygon (radius 101)
-const PIN_RADIUS_LIFTED = 106.6; // pin layer just above lifted polygon (radius 106)
-const PIN_SIZE = 2.6;           // world-unit size of each emoji sprite
+const POLYGON_HOVER_ALT = 0.02;  // 20% of the prior 0.06 lift — subtler pop on hover
+const GLOBE_RADIUS = 100;        // three-globe internal radius
+const PIN_RADIUS_BASE = 100.6;   // pin layer just above base polygon (radius 101)
+const PIN_RADIUS_LIFTED = 102.6; // pin layer just above lifted polygon (radius 102)
+const PIN_SIZE = 2.6;            // world-unit size of each emoji sprite
 
 function featureName(d: any): string {
   return normalizeCountry(
