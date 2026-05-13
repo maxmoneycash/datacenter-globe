@@ -87,7 +87,7 @@ const GlobeDashboard: React.FC = () => {
   const totalCountries = countryStats.size;
 
   return (
-    <div className="relative w-full h-screen bg-black overflow-hidden text-white">
+    <div className="relative w-full h-screen bg-[#0c0c0e] overflow-hidden text-white">
       <Globe
         datacenters={datacenters}
         countryStats={countryStats}
@@ -113,7 +113,7 @@ const GlobeDashboard: React.FC = () => {
           <div
             className={`flex items-center gap-1.5 mt-1 ${
               isMobile ? 'text-[9px] px-2 py-0.5' : 'text-sm mt-2 px-3 py-1'
-            } text-gray-400 bg-black/40 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto`}
+            } text-gray-400 bg-[#0c0c0e]/60 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto`}
             style={{ fontFamily: 'JetBrains Mono, monospace' }}
           >
             <Activity size={isMobile ? 10 : 14} className="animate-pulse" style={{ color: '#ff4d4d' }} />
@@ -196,7 +196,7 @@ const GlobeDashboard: React.FC = () => {
       </AnimatePresence>
 
       {loading && (
-        <div className="absolute inset-0 bg-black z-50 flex items-center justify-center">
+        <div className="absolute inset-0 bg-[#0c0c0e] z-50 flex items-center justify-center">
           <div className="text-center">
             <div
               className="w-16 h-16 border-4 border-t-transparent rounded-full animate-spin mx-auto mb-4"

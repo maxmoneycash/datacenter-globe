@@ -29,6 +29,7 @@ const PIN_FONT_SIZE_HOVER = 26;
 interface SidebarRowProps {
   dc: Datacenter;
   isActive: boolean;
+  isMobile: boolean;
   onHover: (dc: Datacenter) => void;
   onLeave: (dc: Datacenter) => void;
   onSelect: (dc: Datacenter) => void;
@@ -37,6 +38,7 @@ interface SidebarRowProps {
 const SidebarRow = memo(function SidebarRow({
   dc,
   isActive,
+  isMobile,
   onHover,
   onLeave,
   onSelect,
@@ -46,19 +48,23 @@ const SidebarRow = memo(function SidebarRow({
       onClick={() => onSelect(dc)}
       onMouseEnter={() => onHover(dc)}
       onMouseLeave={() => onLeave(dc)}
-      className="w-full text-left px-6 py-3 border-b border-white/5 transition-colors"
+      className={`w-full text-left border-b border-white/5 transition-colors ${
+        isMobile ? 'px-4 py-2.5' : 'px-6 py-3'
+      }`}
       style={{
         background: isActive ? 'rgba(255,159,67,0.10)' : 'transparent',
         borderLeft: isActive ? '2px solid #ff9f43' : '2px solid transparent',
       }}
     >
-      <div className="font-sans text-[13px] font-semibold leading-tight truncate">{dc.name}</div>
+      <div className={`font-sans font-semibold leading-tight truncate ${isMobile ? 'text-[12px]' : 'text-[13px]'}`}>
+        {dc.name}
+      </div>
       <div className="font-mono text-[10px] text-[#facc15] mt-0.5 truncate">{dc.company}</div>
       <div className="font-mono text-[10px] text-white/45 mt-0.5 truncate">
         {[dc.city, dc.state].filter(Boolean).join(', ') || '—'}
       </div>
       {(dc.mw_current != null || dc.status) && (
-        <div className="mt-1.5 flex items-center gap-3 font-mono text-[10px]">
+        <div className="mt-1 flex items-center gap-2.5 font-mono text-[10px]">
           {dc.mw_current != null && (
             <span className="text-[#facc15]">
               ⚡ {dc.mw_current} MW
@@ -208,7 +214,7 @@ const CountryPanel: React.FC<Props> = ({
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.3 }}
-      className="absolute inset-0 z-20 bg-black/95 backdrop-blur-xl"
+      className="absolute inset-0 z-20 bg-[#0c0c0e]/95 backdrop-blur-xl"
     >
       <motion.svg
         width={isMobile ? width : width}
@@ -278,7 +284,7 @@ const CountryPanel: React.FC<Props> = ({
         initial={isMobile ? { opacity: 0, y: 30 } : { opacity: 0, x: -20 }}
         animate={isMobile ? { opacity: 1, y: 0 } : { opacity: 1, x: 0 }}
         transition={{ delay: 0.15, duration: 0.4 }}
-        className={`absolute pointer-events-auto flex flex-col bg-black/85 backdrop-blur-md ${
+        className={`absolute pointer-events-auto flex flex-col bg-[#0c0c0e]/85 backdrop-blur-md ${
           isMobile
             ? 'left-0 right-0 border-t border-white/10'
             : 'top-0 left-0 h-full border-r border-white/5'
@@ -317,6 +323,7 @@ const CountryPanel: React.FC<Props> = ({
               key={`${dc.name}-${i}`}
               dc={dc}
               isActive={selectedDc === dc || hoverDc === dc}
+              isMobile={isMobile}
               onHover={onRowHover}
               onLeave={onRowLeave}
               onSelect={onRowSelect}
@@ -339,7 +346,7 @@ const CountryPanel: React.FC<Props> = ({
         initial={{ opacity: 0, x: -8 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.3 }}
-        className={`absolute z-30 font-mono uppercase tracking-widest text-white/70 hover:text-seismic-orange transition-colors pointer-events-auto bg-black/70 backdrop-blur-md border border-white/10 rounded-full ${
+        className={`absolute z-30 font-mono uppercase tracking-widest text-white/70 hover:text-seismic-orange transition-colors pointer-events-auto bg-[#0c0c0e]/80 backdrop-blur-md border border-white/10 rounded-full ${
           isMobile
             ? 'top-3 left-3 text-[11px] px-3 py-2'
             : 'top-6 left-6 text-xs px-3 py-1.5 rounded'
@@ -357,7 +364,7 @@ const CountryPanel: React.FC<Props> = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.12 }}
-            className="absolute z-40 pointer-events-none bg-black/90 backdrop-blur-md border border-white/15 rounded px-3 py-2 font-mono text-[11px] shadow-xl"
+            className="absolute z-40 pointer-events-none bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded px-3 py-2 font-mono text-[11px] shadow-xl"
             style={{
               left: Math.min(hoverPos.x + 14, width - 240),
               top: Math.max(0, hoverPos.y - 8),
@@ -410,7 +417,7 @@ const CountryPanel: React.FC<Props> = ({
             animate={isMobile ? { y: 0 } : { opacity: 1, y: 0, scale: 1 }}
             exit={isMobile ? { y: '100%' } : { opacity: 0, y: 12, scale: 0.95 }}
             transition={{ duration: isMobile ? 0.28 : 0.2, ease: [0.32, 0.72, 0, 1] }}
-            className={`bg-black/95 backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden pointer-events-auto z-50 ${
+            className={`bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden pointer-events-auto z-50 ${
               isMobile
                 ? 'fixed left-0 right-0 bottom-0 rounded-t-2xl border-b-0 max-h-[80vh] overflow-y-auto'
                 : 'absolute top-24 right-8 w-[340px] rounded-lg'

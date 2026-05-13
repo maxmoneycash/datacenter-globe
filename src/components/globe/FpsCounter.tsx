@@ -27,7 +27,7 @@ const FpsCounter: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex items-center gap-2 text-sm font-mono text-seismic-orange bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10 pointer-events-auto select-none shadow-lg">
+    <div className="flex items-center gap-2 text-sm font-mono text-seismic-orange bg-[#0c0c0e]/60 px-3 py-1 rounded-full backdrop-blur-sm border border-white/10 pointer-events-auto select-none shadow-lg">
       <div className={`w-2 h-2 rounded-full ${fps > 50 ? 'bg-seismic-orange' : fps > 30 ? 'bg-yellow-500' : 'bg-red-500'} animate-pulse shadow-[0_0_8px_currentColor]`} />
       <span className="tracking-widest">{fps} FPS</span>
     </div>

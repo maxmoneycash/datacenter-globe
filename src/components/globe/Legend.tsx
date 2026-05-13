@@ -7,7 +7,7 @@ interface Props {
 
 const Legend: React.FC<Props> = ({ totalSites, totalCountries }) => {
   return (
-    <div className="absolute bottom-8 left-8 z-10 p-4 bg-black/60 backdrop-blur-md border border-white/10 rounded-lg text-xs font-mono select-none pointer-events-none">
+    <div className="absolute bottom-8 left-8 z-10 p-4 bg-[#0c0c0e]/75 backdrop-blur-md border border-white/10 rounded-lg text-xs font-mono select-none pointer-events-none">
       <h3 className="mb-2 text-gray-400 font-bold uppercase tracking-widest">Datacenter Density</h3>
       <div className="space-y-2">
         <div className="flex items-center gap-2">

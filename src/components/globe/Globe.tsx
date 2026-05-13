@@ -82,7 +82,7 @@ const Globe: React.FC<GlobeProps> = ({
   // visually solid.
   const customGlobeMaterial = useMemo(() => {
     return new THREE.MeshBasicMaterial({
-      color: '#050505',
+      color: '#13131a', // off-black globe surface, slightly cooler than the bg
       transparent: true,
       opacity: 0.85,
     });
@@ -383,7 +383,7 @@ const Globe: React.FC<GlobeProps> = ({
         )
         .join('');
       return `
-        <div class="bg-black/80 backdrop-blur-md border border-white/20 p-2.5 rounded text-white font-mono text-xs shadow-lg pointer-events-none min-w-[220px]">
+        <div class="bg-[#0c0c0e]/85 backdrop-blur-md border border-white/20 p-2.5 rounded text-white font-mono text-xs shadow-lg pointer-events-none min-w-[220px]">
           <div class="font-bold text-sm mb-1">${name || 'Unknown'}</div>
           <div class="text-gray-400 mb-1">Datacenters: <span class="text-white font-bold">${count.toLocaleString()}</span></div>
           ${topRows ? `<div class="mt-2 pt-2 border-t border-white/10 space-y-0.5">${topRows}</div>` : ''}
@@ -395,10 +395,10 @@ const Globe: React.FC<GlobeProps> = ({
   );
 
   return (
-    <div className="relative w-full h-screen bg-[#000000] cursor-crosshair">
+    <div className="relative w-full h-screen bg-[#0c0c0e] cursor-crosshair">
       {hoveredPin && (
         <div
-          className="absolute z-40 pointer-events-none bg-black/90 backdrop-blur-md border border-white/15 rounded px-3 py-2 shadow-xl"
+          className="absolute z-40 pointer-events-none bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded px-3 py-2 shadow-xl"
           style={{
             left: Math.min(hoveredPin.sx + 14, windowSize.width - 280),
             top: Math.max(8, hoveredPin.sy - 8),
@@ -435,7 +435,7 @@ const Globe: React.FC<GlobeProps> = ({
         ref={globeRef}
         width={windowSize.width}
         height={windowSize.height}
-        backgroundColor="#000000"
+        backgroundColor="#0c0c0e"
         globeMaterial={customGlobeMaterial}
         polygonsData={countries.features}
         polygonAltitude={polygonAltitude}
