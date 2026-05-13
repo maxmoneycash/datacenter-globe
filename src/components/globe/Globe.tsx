@@ -13,7 +13,9 @@ interface GlobeProps {
   selectedCountryName?: string | null;
 }
 
-const BASE_POINT_ALT = 0.011; // sits just above polygon base (0.01)
+// Sits above the hovered polygon's lift altitude (0.06) so pins are never
+// occluded when the country surface rises on hover.
+const BASE_POINT_ALT = 0.075;
 
 function featureName(d: any): string {
   return normalizeCountry(d?.properties?.ADMIN || d?.properties?.NAME || d?.properties?.name || d?.properties?.admin || '');
