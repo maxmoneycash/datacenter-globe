@@ -13,6 +13,8 @@ interface GlobeProps {
   selectedCountryName?: string | null;
 }
 
+const PIN_RAYCAST_LAYER = 1;
+
 // No more hover lift — polygons stay at base altitude. The color flash to
 // white on hover is the only feedback.
 const POLYGON_ALT = 0.01;
@@ -67,8 +69,10 @@ const Globe: React.FC<GlobeProps> = ({
   selectedCountryName,
 }) => {
   const globeRef = useRef<any>(null);
+  const pinsMeshRef = useRef<THREE.Points | null>(null);
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoverD, setHoverD] = useState<any>(null);
+  const [hoveredPin, setHoveredPin] = useState<{ dc: Datacenter; sx: number; sy: number } | null>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   const customGlobeMaterial = useMemo(() => {
@@ -251,13 +255,91 @@ const Globe: React.FC<GlobeProps> = ({
     const pinsMesh = new THREE.Points(geometry, material);
     pinsMesh.frustumCulled = false;
 
+    // Move pins to a separate raycast layer so react-globe.gl's raycaster
+    // (which uses default layer 0) never sees them. Otherwise pins intercept
+    // country clicks and make us click multiple times before the polygon
+    // hit registers.
+    pinsMesh.layers.set(PIN_RAYCAST_LAYER);
+
     scene.add(pinsMesh);
+    pinsMeshRef.current = pinsMesh;
 
     return () => {
       scene.remove(pinsMesh);
       geometry.dispose();
       material.dispose();
       texture.dispose();
+      pinsMeshRef.current = null;
+    };
+  }, [datacenters]);
+
+  /**
+   * Custom raycaster for pin hover. Layer-isolated so we don't compete with
+   * react-globe.gl's polygon raycaster. RAF-throttled so the hover state
+   * updates at most once per frame.
+   *
+   * After a raycast hit, we re-check the hemisphere (same logic as the shader)
+   * so we don't "hover" a pin on the back of the globe that's not visible.
+   */
+  useEffect(() => {
+    if (!globeRef.current) return;
+    if (datacenters.length === 0) return;
+    const renderer = globeRef.current.renderer?.();
+    const camera = globeRef.current.camera?.();
+    if (!renderer || !camera) return;
+    const canvas: HTMLCanvasElement = renderer.domElement;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.layers.set(PIN_RAYCAST_LAYER);
+    raycaster.params.Points = { threshold: 0.9 };
+    const ndc = new THREE.Vector2();
+
+    let rafId = 0;
+    let lastEvent: PointerEvent | null = null;
+
+    const tick = () => {
+      rafId = 0;
+      if (!lastEvent || !pinsMeshRef.current) return;
+      const rect = canvas.getBoundingClientRect();
+      const cx = lastEvent.clientX - rect.left;
+      const cy = lastEvent.clientY - rect.top;
+      ndc.x = (cx / rect.width) * 2 - 1;
+      ndc.y = -(cy / rect.height) * 2 + 1;
+      raycaster.setFromCamera(ndc, camera);
+      const hits = raycaster.intersectObject(pinsMeshRef.current, false);
+
+      let found: { dc: Datacenter; sx: number; sy: number } | null = null;
+      for (const hit of hits) {
+        // Hemisphere check — back-of-globe pins are invisible (shader discards
+        // them) so we shouldn't allow hovering them.
+        const outward = hit.point.clone().normalize();
+        const toCam = camera.position.clone().normalize();
+        if (outward.dot(toCam) > 0 && hit.index !== undefined) {
+          found = { dc: datacenters[hit.index], sx: cx, sy: cy };
+          break;
+        }
+      }
+      setHoveredPin((prev) => {
+        if (prev?.dc === found?.dc && prev?.sx === found?.sx && prev?.sy === found?.sy) return prev;
+        return found;
+      });
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      lastEvent = e;
+      if (!rafId) rafId = requestAnimationFrame(tick);
+    };
+    const onPointerLeave = () => {
+      lastEvent = null;
+      setHoveredPin(null);
+    };
+
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerleave', onPointerLeave);
+    return () => {
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerleave', onPointerLeave);
+      if (rafId) cancelAnimationFrame(rafId);
     };
   }, [datacenters]);
 
@@ -324,7 +406,42 @@ const Globe: React.FC<GlobeProps> = ({
   );
 
   return (
-    <div className="w-full h-screen bg-[#000000] cursor-crosshair">
+    <div className="relative w-full h-screen bg-[#000000] cursor-crosshair">
+      {hoveredPin && (
+        <div
+          className="absolute z-40 pointer-events-none bg-black/90 backdrop-blur-md border border-white/15 rounded px-3 py-2 shadow-xl"
+          style={{
+            left: Math.min(hoveredPin.sx + 14, windowSize.width - 280),
+            top: Math.max(8, hoveredPin.sy - 8),
+            minWidth: 220,
+            maxWidth: 280,
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: 11,
+          }}
+        >
+          <div className="font-sans font-semibold text-sm text-white leading-tight">
+            {hoveredPin.dc.name}
+          </div>
+          <div className="text-[#facc15] mt-0.5 truncate">{hoveredPin.dc.company}</div>
+          {hoveredPin.dc.city && (
+            <div className="text-white/55 mt-0.5 truncate">
+              {[hoveredPin.dc.city, hoveredPin.dc.state, hoveredPin.dc.country]
+                .filter(Boolean)
+                .join(', ')}
+            </div>
+          )}
+          {hoveredPin.dc.mw_current != null && (
+            <div className="mt-1.5 pt-1.5 border-t border-white/10 flex items-center gap-1.5 text-[#facc15]">
+              <span>⚡</span>
+              <span>{hoveredPin.dc.mw_current} MW</span>
+              {hoveredPin.dc.mw_planned_max != null &&
+                hoveredPin.dc.mw_planned_max !== hoveredPin.dc.mw_current && (
+                  <span className="text-white/45">/ {hoveredPin.dc.mw_planned_max} planned</span>
+                )}
+            </div>
+          )}
+        </div>
+      )}
       <GlobeGL
         ref={globeRef}
         width={windowSize.width}

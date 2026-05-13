@@ -198,55 +198,94 @@ const CountryPanel: React.FC<Props> = ({
         })}
       </motion.svg>
 
-      {/* Left stats panel */}
+      {/* Left stats panel — scrolling list of every datacenter in this country */}
       <motion.aside
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.15, duration: 0.4 }}
-        className="absolute top-0 left-0 h-full pointer-events-none flex flex-col"
-        style={{ width: LEFT_PANEL_WIDTH, padding: '76px 24px 24px 24px' }}
+        className="absolute top-0 left-0 h-full pointer-events-auto flex flex-col bg-black/70 backdrop-blur-md border-r border-white/5"
+        style={{ width: LEFT_PANEL_WIDTH }}
       >
-        <div className="font-mono text-xs uppercase tracking-widest text-seismic-orange flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-seismic-orange" />
-          {stat?.count.toLocaleString() ?? 0} datacenters
-        </div>
-        <h2 className="font-sans text-4xl font-light tracking-tighter mt-1 leading-tight">
-          {countryName}
-        </h2>
-        {offMapCount > 0 && (
-          <div className="mt-1 font-mono text-[10px] text-white/35 uppercase tracking-widest">
-            +{offMapCount} off-map territories
+        {/* Fixed header */}
+        <div className="px-6 pt-20 pb-4 border-b border-white/5">
+          <div className="font-mono text-xs uppercase tracking-widest text-seismic-orange flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-seismic-orange" />
+            {stat?.count.toLocaleString() ?? 0} datacenters
           </div>
-        )}
-
-        {stat?.topCompanies?.length ? (
-          <div className="mt-5 font-mono text-[11px] text-white/70 space-y-1">
-            <div className="text-white/40 uppercase tracking-widest text-[10px] mb-1.5">
-              Top Operators
+          <h2 className="font-sans text-3xl font-light tracking-tighter mt-1 leading-tight">
+            {countryName}
+          </h2>
+          {offMapCount > 0 && (
+            <div className="mt-1 font-mono text-[10px] text-white/35 uppercase tracking-widest">
+              +{offMapCount} off-map territories
             </div>
-            {stat.topCompanies.slice(0, 8).map((c) => {
-              const pct = stat.count > 0 ? (c.count / stat.count) * 100 : 0;
+          )}
+        </div>
+
+        {/* Scrolling list of every datacenter in country, sorted by MW desc then name */}
+        <div className="flex-1 overflow-y-auto">
+          {[...inCountry]
+            .sort((a, b) => {
+              const aMw = a.mw_current ?? -1;
+              const bMw = b.mw_current ?? -1;
+              if (aMw !== bMw) return bMw - aMw;
+              return a.name.localeCompare(b.name);
+            })
+            .map((dc, i) => {
+              const isActive = selectedDc === dc || hoverDc === dc;
               return (
-                <div key={c.company} className="group pointer-events-auto">
-                  <div className="flex justify-between gap-3">
-                    <span className="truncate">{c.company}</span>
-                    <span className="text-[#facc15] font-bold">{c.count}</span>
+                <button
+                  key={`${dc.name}-${i}`}
+                  onClick={() => setSelectedDc(dc)}
+                  onMouseEnter={() => setHoverDc(dc)}
+                  onMouseLeave={() => setHoverDc((curr) => (curr === dc ? null : curr))}
+                  className="w-full text-left px-6 py-3 border-b border-white/5 transition-colors"
+                  style={{
+                    background: isActive ? 'rgba(255,159,67,0.10)' : 'transparent',
+                    borderLeft: isActive ? '2px solid #ff9f43' : '2px solid transparent',
+                  }}
+                >
+                  <div className="font-sans text-[13px] font-semibold leading-tight truncate">
+                    {dc.name}
                   </div>
-                  <div className="h-[2px] bg-white/5 mt-1 overflow-hidden rounded-full">
-                    <div
-                      className="h-full bg-seismic-orange"
-                      style={{ width: `${Math.max(2, pct)}%`, opacity: 0.7 }}
-                    />
+                  <div className="font-mono text-[10px] text-[#facc15] mt-0.5 truncate">
+                    {dc.company}
                   </div>
-                </div>
+                  <div className="font-mono text-[10px] text-white/45 mt-0.5 truncate">
+                    {[dc.city, dc.state].filter(Boolean).join(', ') || '—'}
+                  </div>
+                  {(dc.mw_current != null || dc.status) && (
+                    <div className="mt-1.5 flex items-center gap-3 font-mono text-[10px]">
+                      {dc.mw_current != null && (
+                        <span className="text-[#facc15]">
+                          ⚡ {dc.mw_current} MW
+                          {dc.mw_planned_max != null &&
+                            dc.mw_planned_max !== dc.mw_current && (
+                              <span className="text-white/40"> / {dc.mw_planned_max}</span>
+                            )}
+                        </span>
+                      )}
+                      {dc.status && (
+                        <span className="flex items-center gap-1 text-white/55 uppercase tracking-widest">
+                          <span
+                            className="w-1.5 h-1.5 rounded-full"
+                            style={{
+                              background:
+                                dc.status === 'operational' ? '#4ade80' : '#facc15',
+                            }}
+                          />
+                          {dc.status.replace(/_/g, ' ')}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </button>
               );
             })}
-          </div>
-        ) : null}
+        </div>
 
-        <div className="flex-1" />
-        <div className="font-mono text-[10px] text-white/30 uppercase tracking-widest">
-          Hover a pin for details · click to expand
+        <div className="px-6 py-3 border-t border-white/5 font-mono text-[10px] text-white/35 uppercase tracking-widest">
+          Click any site for full details
         </div>
       </motion.aside>
 
