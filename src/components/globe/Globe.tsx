@@ -15,12 +15,9 @@ interface GlobeProps {
 
 const POLYGON_BASE_ALT = 0.01;
 const POLYGON_HOVER_ALT = 0.06;
-
-// react-globe.gl uses a globe radius of 100 internally.
-const GLOBE_RADIUS = 100;
-const PIN_RADIUS = 0.45;     // size of each flat disc in world units
-const PIN_OFFSET = 100.5;    // place dots just above the globe surface
-const PIN_COLOR = '#d4d4d8'; // zinc-300
+const GLOBE_RADIUS = 100;       // three-globe internal radius
+const PIN_RADIUS = 100.5;       // pin layer sits just above globe surface
+const PIN_SIZE = 2.6;           // world-unit size of each emoji sprite
 
 function featureName(d: any): string {
   return normalizeCountry(
@@ -28,16 +25,36 @@ function featureName(d: any): string {
   );
 }
 
-// lat,lng → 3D position on a sphere of given radius. Same convention as
-// react-globe.gl / three-globe so our overlay aligns perfectly with the
-// underlying polygons.
-function latLngToVec3(lat: number, lng: number, r: number): THREE.Vector3 {
-  const phi = (90 - lat) * (Math.PI / 180);
-  const theta = (lng + 180) * (Math.PI / 180);
-  const x = -r * Math.sin(phi) * Math.cos(theta);
-  const z = r * Math.sin(phi) * Math.sin(theta);
-  const y = r * Math.cos(phi);
-  return new THREE.Vector3(x, y, z);
+// EXACT three-globe polar→cartesian convention. (90 − lng), not (lng + 180).
+// Our previous custom mapping was off by 90° which is why pins landed in oceans.
+function polar2Cartesian(lat: number, lng: number, r: number): THREE.Vector3 {
+  const phi = ((90 - lat) * Math.PI) / 180;
+  const theta = ((90 - lng) * Math.PI) / 180;
+  return new THREE.Vector3(
+    r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi),
+    r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+// Render a 📍 emoji to a canvas texture. Reused across all 5,700 pins via
+// THREE.Points (one draw call, billboarded = always faces camera).
+function makeEmojiTexture(emoji: string, size = 128): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, size, size);
+  ctx.font = `${Math.floor(size * 0.82)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Slight Y bias so the pin's point lands close to center
+  ctx.fillText(emoji, size / 2, size * 0.55);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 const Globe: React.FC<GlobeProps> = ({
@@ -49,7 +66,6 @@ const Globe: React.FC<GlobeProps> = ({
   selectedCountryName,
 }) => {
   const globeRef = useRef<any>(null);
-  const pinsMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoverD, setHoverD] = useState<any>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -98,7 +114,7 @@ const Globe: React.FC<GlobeProps> = ({
     setRotation();
   }, [isPaused]);
 
-  // Scene scaffolding (grid + rim + lights) — original Gini visualization look
+  // Globe scene scaffolding (cyan grid, purple rim, key + fill lights)
   useEffect(() => {
     if (!globeRef.current) return;
     const scene = globeRef.current.scene();
@@ -145,17 +161,19 @@ const Globe: React.FC<GlobeProps> = ({
   }, []);
 
   /**
-   * Custom flat-disc pin layer. Owned by us (not react-globe.gl), so we have
-   * total control over the material.
+   * Datacenter pin layer — 📍 emoji rendered via THREE.Points.
    *
-   * Geometry: a real CircleGeometry → literally a 2D disc (no cylinder).
-   * Material: depthTest = false + renderOrder = 1000 → always paints on
-   *   top of polygons regardless of how high they lift on hover.
-   * Instancing: one InstancedMesh holds all 5,700 pins → one draw call.
+   * THREE.Points is the right primitive for this:
+   *   • Billboarded — every quad always faces the camera, so the 📍 emoji
+   *     always reads as a pushpin no matter where it sits on the sphere.
+   *   • One draw call for all ~5,700 markers (single BufferGeometry).
+   *   • PointsMaterial with `map` lets us use the emoji canvas as a sprite.
    *
-   * Each instance is oriented so its disc face points outward from the globe
-   * (i.e. tangent to the sphere at that lat/lng). We attach this to the same
-   * scene the globe controls, so it auto-rotates and orbits with the globe.
+   * We disable depth test / write and use a high renderOrder so the pins
+   * always paint on top of polygons — including when a country lifts on hover.
+   *
+   * The whole layer is attached to react-globe.gl's globe group so it inherits
+   * auto-rotation + orbit controls.
    */
   useEffect(() => {
     if (!globeRef.current) return;
@@ -163,10 +181,7 @@ const Globe: React.FC<GlobeProps> = ({
     if (!scene) return;
     if (datacenters.length === 0) return;
 
-    // Find react-globe.gl's globe group so our pins rotate together with the
-    // globe (auto-rotation, orbit controls). The globe.gl scene tree includes
-    // a top-level group named "globe" or similar. We pick the first Group we
-    // find that has Mesh children — that's the globe.
+    // Find the globe group so our pins rotate with it.
     let globeGroup: THREE.Object3D = scene;
     scene.traverse((obj: any) => {
       if (globeGroup !== scene) return;
@@ -175,45 +190,44 @@ const Globe: React.FC<GlobeProps> = ({
       }
     });
 
-    const geometry = new THREE.CircleGeometry(PIN_RADIUS, 12);
-    const material = new THREE.MeshBasicMaterial({
-      color: PIN_COLOR,
-      side: THREE.DoubleSide,
+    const positions = new Float32Array(datacenters.length * 3);
+    for (let i = 0; i < datacenters.length; i++) {
+      const [lat, lng] = datacenters[i].city_coords!;
+      const v = polar2Cartesian(lat, lng, PIN_RADIUS);
+      positions[i * 3] = v.x;
+      positions[i * 3 + 1] = v.y;
+      positions[i * 3 + 2] = v.z;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const texture = makeEmojiTexture('📍');
+
+    const material = new THREE.PointsMaterial({
+      map: texture,
+      size: PIN_SIZE,
       transparent: true,
+      alphaTest: 0.1,
       depthTest: false,
       depthWrite: false,
+      sizeAttenuation: true,
     });
 
-    const mesh = new THREE.InstancedMesh(geometry, material, datacenters.length);
-    mesh.renderOrder = 1000;
-    mesh.frustumCulled = false;
+    const pinsMesh = new THREE.Points(geometry, material);
+    pinsMesh.renderOrder = 1000;
+    pinsMesh.frustumCulled = false;
 
-    const dummy = new THREE.Object3D();
-    for (let i = 0; i < datacenters.length; i++) {
-      const dc = datacenters[i];
-      const [lat, lng] = dc.city_coords!;
-      const pos = latLngToVec3(lat, lng, PIN_OFFSET);
-      dummy.position.copy(pos);
-      // CircleGeometry's default normal is +Z. lookAt(0,0,0) orients +Z
-      // away from origin = outward from the globe. So the disc faces outward.
-      dummy.lookAt(0, 0, 0);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
-
-    globeGroup.add(mesh);
-    pinsMeshRef.current = mesh;
+    globeGroup.add(pinsMesh);
 
     return () => {
-      globeGroup.remove(mesh);
+      globeGroup.remove(pinsMesh);
       geometry.dispose();
       material.dispose();
-      pinsMeshRef.current = null;
+      texture.dispose();
     };
   }, [datacenters]);
 
-  // Polygon styling — original Gini visualization (lift + white on hover)
   const polygonBaseColorMap = useMemo(() => {
     const map = new WeakMap<object, string>();
     for (const f of countries.features) {
