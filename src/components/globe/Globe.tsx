@@ -13,12 +13,12 @@ interface GlobeProps {
   selectedCountryName?: string | null;
 }
 
-const POLYGON_BASE_ALT = 0.01;
-const POLYGON_HOVER_ALT = 0.02;  // 20% of the prior 0.06 lift — subtler pop on hover
-const GLOBE_RADIUS = 100;        // three-globe internal radius
-const PIN_RADIUS_BASE = 100.6;   // pin layer just above base polygon (radius 101)
-const PIN_RADIUS_LIFTED = 102.6; // pin layer just above lifted polygon (radius 102)
-const PIN_SIZE = 2.6;            // world-unit size of each emoji sprite
+// No more hover lift — polygons stay at base altitude. The color flash to
+// white on hover is the only feedback.
+const POLYGON_ALT = 0.01;
+const GLOBE_RADIUS = 100;
+const PIN_RADIUS = 101.05; // just above the polygon cap at radius 101
+const PIN_SIZE = 2.6;
 
 function featureName(d: any): string {
   return normalizeCountry(
@@ -67,7 +67,6 @@ const Globe: React.FC<GlobeProps> = ({
   selectedCountryName,
 }) => {
   const globeRef = useRef<any>(null);
-  const pinGeometryRef = useRef<THREE.BufferGeometry | null>(null);
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoverD, setHoverD] = useState<any>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -177,27 +176,30 @@ const Globe: React.FC<GlobeProps> = ({
    * The whole layer is attached to react-globe.gl's globe group so it inherits
    * auto-rotation + orbit controls.
    */
+  /**
+   * Datacenter pin layer — 📍 emoji rendered via THREE.Points.
+   *
+   * Positioning is static (no reactive transforms). Each pin sits at a fixed
+   * radius just above the polygon cap. We attach the layer directly to the
+   * scene so it stays aligned with three-globe's internal coordinate frame.
+   *
+   * Back-of-globe culling: a custom vertex shader (injected via
+   * onBeforeCompile) computes the dot product of each pin's outward direction
+   * with the camera direction. Pins on the far hemisphere are discarded by
+   * the fragment shader, so the see-through globe doesn't reveal them.
+   *
+   * Single THREE.Points mesh, one draw call, billboarded.
+   */
   useEffect(() => {
     if (!globeRef.current) return;
     const scene = globeRef.current.scene();
     if (!scene) return;
     if (datacenters.length === 0) return;
 
-    // Find the globe group so our pins rotate with it.
-    let globeGroup: THREE.Object3D = scene;
-    scene.traverse((obj: any) => {
-      if (globeGroup !== scene) return;
-      if (obj.isGroup && obj.children?.some((c: any) => c.isMesh)) {
-        globeGroup = obj;
-      }
-    });
-
-    // Initial positions: all pins at base radius. The reactive update effect
-    // below moves the hovered/selected country's pins up to the lifted radius.
     const positions = new Float32Array(datacenters.length * 3);
     for (let i = 0; i < datacenters.length; i++) {
       const [lat, lng] = datacenters[i].city_coords!;
-      const v = polar2Cartesian(lat, lng, PIN_RADIUS_BASE);
+      const v = polar2Cartesian(lat, lng, PIN_RADIUS);
       positions[i * 3] = v.x;
       positions[i * 3 + 1] = v.y;
       positions[i * 3 + 2] = v.z;
@@ -205,7 +207,6 @@ const Globe: React.FC<GlobeProps> = ({
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    pinGeometryRef.current = geometry;
 
     const texture = makeEmojiTexture('📍');
 
@@ -214,55 +215,51 @@ const Globe: React.FC<GlobeProps> = ({
       size: PIN_SIZE,
       transparent: true,
       alphaTest: 0.1,
-      depthTest: false,
+      depthTest: true,
       depthWrite: false,
       sizeAttenuation: true,
     });
 
+    // Inject hemisphere-visibility test into the shader. Pins whose outward
+    // direction points away from the camera are discarded so back-of-globe
+    // pins don't bleed through the semi-transparent sphere.
+    material.onBeforeCompile = (shader) => {
+      shader.vertexShader = `
+        varying float vVisible;
+        ${shader.vertexShader}
+      `.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+        vec3 outward = normalize(worldPos);
+        vec3 toCamera = normalize(cameraPosition - vec3(0.0));
+        vVisible = dot(outward, toCamera);
+        `
+      );
+      shader.fragmentShader = `
+        varying float vVisible;
+        ${shader.fragmentShader}
+      `.replace(
+        'void main() {',
+        `void main() {
+          if (vVisible < 0.0) discard;
+        `
+      );
+    };
+
     const pinsMesh = new THREE.Points(geometry, material);
-    pinsMesh.renderOrder = 1000;
     pinsMesh.frustumCulled = false;
 
-    globeGroup.add(pinsMesh);
+    scene.add(pinsMesh);
 
     return () => {
-      globeGroup.remove(pinsMesh);
+      scene.remove(pinsMesh);
       geometry.dispose();
       material.dispose();
       texture.dispose();
-      pinGeometryRef.current = null;
     };
   }, [datacenters]);
-
-  /**
-   * Pins stick to the country surface. When a country lifts on hover/select,
-   * its pins lift with it. We rewrite the radial position of each affected
-   * pin in the existing BufferGeometry so the GPU re-uploads only the
-   * position buffer — much cheaper than rebuilding the whole mesh.
-   *
-   * We re-run every time hoverD or selectedCountryName changes. ~5,700 simple
-   * sin/cos calcs ≈ <1ms; fast enough to feel instant on every hover change.
-   */
-  useEffect(() => {
-    const geom = pinGeometryRef.current;
-    if (!geom) return;
-    const posAttr = geom.getAttribute('position') as THREE.BufferAttribute;
-    if (!posAttr) return;
-    const positions = posAttr.array as Float32Array;
-    const hoveredName = hoverD ? featureName(hoverD) : null;
-
-    for (let i = 0; i < datacenters.length; i++) {
-      const dc = datacenters[i];
-      const isLifted = dc.country === hoveredName || dc.country === selectedCountryName;
-      const r = isLifted ? PIN_RADIUS_LIFTED : PIN_RADIUS_BASE;
-      const [lat, lng] = dc.city_coords!;
-      const v = polar2Cartesian(lat, lng, r);
-      positions[i * 3] = v.x;
-      positions[i * 3 + 1] = v.y;
-      positions[i * 3 + 2] = v.z;
-    }
-    posAttr.needsUpdate = true;
-  }, [hoverD, selectedCountryName, datacenters]);
 
   const polygonBaseColorMap = useMemo(() => {
     const map = new WeakMap<object, string>();
@@ -282,14 +279,9 @@ const Globe: React.FC<GlobeProps> = ({
     [hoverD, selectedCountryName, polygonBaseColorMap]
   );
 
-  const polygonAltitude = useCallback(
-    (d: any) => {
-      if (d === hoverD) return POLYGON_HOVER_ALT;
-      if (selectedCountryName && featureName(d) === selectedCountryName) return POLYGON_HOVER_ALT;
-      return POLYGON_BASE_ALT;
-    },
-    [hoverD, selectedCountryName]
-  );
+  // Polygon altitude is constant — no hover lift. Hover feedback is the
+  // color flash to white only.
+  const polygonAltitude = useCallback(() => POLYGON_ALT, []);
 
   const polygonSideColor = useCallback(() => 'rgba(0, 0, 0, 0.5)', []);
   const polygonStrokeColor = useCallback(() => '#111111', []);
