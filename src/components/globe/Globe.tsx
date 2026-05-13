@@ -71,23 +71,18 @@ const Globe: React.FC<GlobeProps> = ({
   const globeRef = useRef<any>(null);
   const pinsMeshRef = useRef<THREE.Points | null>(null);
   const [countries, setCountries] = useState<any>({ features: [] });
-  const [hoverD, setHoverD] = useState<any>(null);
   const [hoveredPin, setHoveredPin] = useState<{ dc: Datacenter; sx: number; sy: number } | null>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
+  // Unlit MeshBasicMaterial — no lighting calculations at all. Big perf win over
+  // MeshPhysicalMaterial (no clearcoat pass, no per-fragment specular/diffuse).
+  // We lose the wet-glass sheen but the dark globe with country fills is still
+  // visually solid.
   const customGlobeMaterial = useMemo(() => {
-    return new THREE.MeshPhysicalMaterial({
+    return new THREE.MeshBasicMaterial({
       color: '#050505',
-      emissive: '#000000',
-      roughness: 0.05,
-      metalness: 0.6,
       transparent: true,
-      opacity: 0.3,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.1,
-      reflectivity: 1.0,
-      specularIntensity: 2.0,
-      specularColor: new THREE.Color('#00f0ff'),
+      opacity: 0.85,
     });
   }, []);
 
@@ -110,7 +105,7 @@ const Globe: React.FC<GlobeProps> = ({
         const controls = globeRef.current.controls();
         if (controls) {
           controls.autoRotate = !isPaused;
-          controls.autoRotateSpeed = 0.5;
+          controls.autoRotateSpeed = 0.25; // half the speed → less GPU churn
         } else {
           setTimeout(setRotation, 100);
         }
@@ -119,27 +114,21 @@ const Globe: React.FC<GlobeProps> = ({
     setRotation();
   }, [isPaused]);
 
-  // Globe scene scaffolding (cyan grid, purple rim, key + fill lights)
+  // Minimal scene scaffolding — just the purple rim glow + one ambient light
+  // for polygon shading. Dropped:
+  //   • Cyan wireframe grid sphere (full extra draw call)
+  //   • PointLight key + cyan fill (per-fragment lighting cost on polygons)
+  // Atmosphere is still on via react-globe.gl's built-in showAtmosphere prop.
   useEffect(() => {
     if (!globeRef.current) return;
     const scene = globeRef.current.scene();
     if (!scene) return;
 
-    const gridGeo = new THREE.SphereGeometry(101, 32, 16);
-    const gridMat = new THREE.MeshBasicMaterial({
-      color: '#00f0ff',
-      wireframe: true,
-      transparent: true,
-      opacity: 0.05,
-    });
-    const gridMesh = new THREE.Mesh(gridGeo, gridMat);
-    scene.add(gridMesh);
-
-    const rimGeo = new THREE.SphereGeometry(100, 32, 32);
+    const rimGeo = new THREE.SphereGeometry(100, 24, 24);
     const rimMat = new THREE.MeshBasicMaterial({
       color: '#8b5cf6',
       transparent: true,
-      opacity: 0.15,
+      opacity: 0.12,
       side: THREE.BackSide,
       blending: THREE.AdditiveBlending,
     });
@@ -147,21 +136,12 @@ const Globe: React.FC<GlobeProps> = ({
     rimMesh.scale.set(1.05, 1.05, 1.05);
     scene.add(rimMesh);
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.25);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
     scene.add(ambientLight);
-    const keyLight = new THREE.PointLight(0xffffff, 2.0);
-    keyLight.position.set(200, 200, 200);
-    scene.add(keyLight);
-    const fillLight = new THREE.PointLight(0x00f0ff, 1.6);
-    fillLight.position.set(-200, -100, -100);
-    scene.add(fillLight);
 
     return () => {
-      scene.remove(gridMesh);
       scene.remove(rimMesh);
       scene.remove(ambientLight);
-      scene.remove(keyLight);
-      scene.remove(fillLight);
     };
   }, []);
 
@@ -354,13 +334,13 @@ const Globe: React.FC<GlobeProps> = ({
     return map;
   }, [countries, countryStats]);
 
+  // Static color per polygon — no hover-white anymore. This means react-globe.gl
+  // doesn't have to re-evaluate all 177 polygons + interpolate colors over
+  // 300ms on every mouse-into-new-country event. Cursor still changes + the
+  // polygon-label tooltip surfaces on hover; click feedback is the flat-map view.
   const polygonCapColor = useCallback(
-    (d: any) => {
-      if (d === hoverD) return '#ffffff';
-      if (selectedCountryName && featureName(d) === selectedCountryName) return '#ffffff';
-      return polygonBaseColorMap.get(d) || BUCKET_COLORS.none;
-    },
-    [hoverD, selectedCountryName, polygonBaseColorMap]
+    (d: any) => polygonBaseColorMap.get(d) || BUCKET_COLORS.none,
+    [polygonBaseColorMap]
   );
 
   // Polygon altitude is constant — no hover lift. Hover feedback is the
@@ -370,9 +350,11 @@ const Globe: React.FC<GlobeProps> = ({
   const polygonSideColor = useCallback(() => 'rgba(0, 0, 0, 0.5)', []);
   const polygonStrokeColor = useCallback(() => '#111111', []);
 
-  const handlePolygonHover = useCallback((d: any) => {
-    setHoverD((prev: any) => (prev === d ? prev : d));
-  }, []);
+  // We don't react to polygon hover anymore — polygon colors are static and the
+  // built-in polygonLabel tooltip surfaces info on hover without needing React
+  // state updates. Avoiding setHoverD prevents a re-render on every new
+  // country-under-cursor event.
+  const handlePolygonHover = useCallback(() => {}, []);
 
   const handlePolygonClick = useCallback(
     (polygon: any) => {
@@ -459,7 +441,7 @@ const Globe: React.FC<GlobeProps> = ({
         onPolygonHover={handlePolygonHover}
         onPolygonClick={handlePolygonClick}
         onGlobeClick={onBackgroundClick}
-        polygonsTransitionDuration={300}
+        polygonsTransitionDuration={0}
         showAtmosphere={true}
         atmosphereColor="#8b5cf6"
         atmosphereAltitude={0.15}
