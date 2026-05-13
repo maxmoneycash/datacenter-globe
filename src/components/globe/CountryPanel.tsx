@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, memo } from 'react';
 import { X, MapPin, Building2, Box, Zap, ExternalLink } from 'lucide-react';
 import { geoMercator, geoPath, geoArea } from 'd3-geo';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -22,7 +22,64 @@ const LEFT_PANEL_WIDTH = 340;
 // 📍 emoji markers — match the world-globe view.
 const PIN_FONT_SIZE = 18;
 const PIN_FONT_SIZE_HOVER = 26;
-const PIN_HITBOX_R = 16;
+
+// Sidebar row — memoized so hovering or selecting one row doesn't re-render
+// the other 2,000+ rows for a country like the United States.
+interface SidebarRowProps {
+  dc: Datacenter;
+  isActive: boolean;
+  onHover: (dc: Datacenter) => void;
+  onLeave: (dc: Datacenter) => void;
+  onSelect: (dc: Datacenter) => void;
+}
+
+const SidebarRow = memo(function SidebarRow({
+  dc,
+  isActive,
+  onHover,
+  onLeave,
+  onSelect,
+}: SidebarRowProps) {
+  return (
+    <button
+      onClick={() => onSelect(dc)}
+      onMouseEnter={() => onHover(dc)}
+      onMouseLeave={() => onLeave(dc)}
+      className="w-full text-left px-6 py-3 border-b border-white/5 transition-colors"
+      style={{
+        background: isActive ? 'rgba(255,159,67,0.10)' : 'transparent',
+        borderLeft: isActive ? '2px solid #ff9f43' : '2px solid transparent',
+      }}
+    >
+      <div className="font-sans text-[13px] font-semibold leading-tight truncate">{dc.name}</div>
+      <div className="font-mono text-[10px] text-[#facc15] mt-0.5 truncate">{dc.company}</div>
+      <div className="font-mono text-[10px] text-white/45 mt-0.5 truncate">
+        {[dc.city, dc.state].filter(Boolean).join(', ') || '—'}
+      </div>
+      {(dc.mw_current != null || dc.status) && (
+        <div className="mt-1.5 flex items-center gap-3 font-mono text-[10px]">
+          {dc.mw_current != null && (
+            <span className="text-[#facc15]">
+              ⚡ {dc.mw_current} MW
+              {dc.mw_planned_max != null && dc.mw_planned_max !== dc.mw_current && (
+                <span className="text-white/40"> / {dc.mw_planned_max}</span>
+              )}
+            </span>
+          )}
+          {dc.status && (
+            <span className="flex items-center gap-1 text-white/55 uppercase tracking-widest">
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ background: dc.status === 'operational' ? '#4ade80' : '#facc15' }}
+              />
+              {dc.status.replace(/_/g, ' ')}
+            </span>
+          )}
+        </div>
+      )}
+    </button>
+  );
+});
 
 const CountryPanel: React.FC<Props> = ({
   countryName,
@@ -77,6 +134,24 @@ const CountryPanel: React.FC<Props> = ({
     () => datacenters.filter((d) => d.country === countryName && d.city_coords),
     [datacenters, countryName]
   );
+
+  const sortedInCountry = useMemo(() => {
+    return [...inCountry].sort((a, b) => {
+      const aMw = a.mw_current ?? -1;
+      const bMw = b.mw_current ?? -1;
+      if (aMw !== bMw) return bMw - aMw;
+      return a.name.localeCompare(b.name);
+    });
+  }, [inCountry]);
+
+  // Stable handlers so memoized SidebarRow doesn't re-render when these refs
+  // change between parent renders.
+  const onRowHover = useCallback((dc: Datacenter) => setHoverDc(dc), []);
+  const onRowLeave = useCallback(
+    (dc: Datacenter) => setHoverDc((curr) => (curr === dc ? null : curr)),
+    []
+  );
+  const onRowSelect = useCallback((dc: Datacenter) => setSelectedDc(dc), []);
 
   const mapLeft = LEFT_PANEL_WIDTH;
   const mapWidth = Math.max(400, width - LEFT_PANEL_WIDTH);
@@ -157,43 +232,34 @@ const CountryPanel: React.FC<Props> = ({
           />
         )}
 
-        {/* 📍 emoji markers — match the world-globe view. Invisible hit zone. */}
+        {/* 📍 emoji markers — single <text> per pin. The text element itself is
+            the hit target (its bounding box is ~18×18, plenty clickable). Cuts
+            DOM nodes per pin from 3 → 1 — saves ~6,000 nodes in the US view. */}
         {visiblePins.map((p, i) => {
           const isActive = selectedDc === p.dc || hoverDc === p.dc;
           return (
-            <g key={i}>
-              <text
-                x={p.x}
-                y={p.y}
-                fontSize={isActive ? PIN_FONT_SIZE_HOVER : PIN_FONT_SIZE}
-                textAnchor="middle"
-                dominantBaseline="central"
-                style={{
-                  pointerEvents: 'none',
-                  filter: isActive
-                    ? 'drop-shadow(0 0 6px rgba(255,159,67,0.9))'
-                    : 'drop-shadow(0 0 2px rgba(0,0,0,0.85))',
-                  transition: 'font-size 120ms ease',
-                }}
-              >
-                📍
-              </text>
-              <circle
-                cx={p.x}
-                cy={p.y}
-                r={PIN_HITBOX_R}
-                fill="transparent"
-                style={{ cursor: 'pointer' }}
-                onMouseEnter={() => {
-                  setHoverDc(p.dc);
-                  setHoverPos({ x: p.x, y: p.y });
-                }}
-                onMouseLeave={() => {
-                  setHoverDc((curr) => (curr === p.dc ? null : curr));
-                }}
-                onClick={() => setSelectedDc(p.dc)}
-              />
-            </g>
+            <text
+              key={i}
+              x={p.x}
+              y={p.y}
+              fontSize={isActive ? PIN_FONT_SIZE_HOVER : PIN_FONT_SIZE}
+              textAnchor="middle"
+              dominantBaseline="central"
+              style={{
+                cursor: 'pointer',
+                filter: isActive
+                  ? 'drop-shadow(0 0 6px rgba(255,159,67,0.9))'
+                  : 'drop-shadow(0 0 2px rgba(0,0,0,0.85))',
+              }}
+              onMouseEnter={() => {
+                setHoverDc(p.dc);
+                setHoverPos({ x: p.x, y: p.y });
+              }}
+              onMouseLeave={() => setHoverDc((curr) => (curr === p.dc ? null : curr))}
+              onClick={() => setSelectedDc(p.dc)}
+            >
+              📍
+            </text>
           );
         })}
       </motion.svg>
@@ -224,64 +290,16 @@ const CountryPanel: React.FC<Props> = ({
 
         {/* Scrolling list of every datacenter in country, sorted by MW desc then name */}
         <div className="flex-1 overflow-y-auto">
-          {[...inCountry]
-            .sort((a, b) => {
-              const aMw = a.mw_current ?? -1;
-              const bMw = b.mw_current ?? -1;
-              if (aMw !== bMw) return bMw - aMw;
-              return a.name.localeCompare(b.name);
-            })
-            .map((dc, i) => {
-              const isActive = selectedDc === dc || hoverDc === dc;
-              return (
-                <button
-                  key={`${dc.name}-${i}`}
-                  onClick={() => setSelectedDc(dc)}
-                  onMouseEnter={() => setHoverDc(dc)}
-                  onMouseLeave={() => setHoverDc((curr) => (curr === dc ? null : curr))}
-                  className="w-full text-left px-6 py-3 border-b border-white/5 transition-colors"
-                  style={{
-                    background: isActive ? 'rgba(255,159,67,0.10)' : 'transparent',
-                    borderLeft: isActive ? '2px solid #ff9f43' : '2px solid transparent',
-                  }}
-                >
-                  <div className="font-sans text-[13px] font-semibold leading-tight truncate">
-                    {dc.name}
-                  </div>
-                  <div className="font-mono text-[10px] text-[#facc15] mt-0.5 truncate">
-                    {dc.company}
-                  </div>
-                  <div className="font-mono text-[10px] text-white/45 mt-0.5 truncate">
-                    {[dc.city, dc.state].filter(Boolean).join(', ') || '—'}
-                  </div>
-                  {(dc.mw_current != null || dc.status) && (
-                    <div className="mt-1.5 flex items-center gap-3 font-mono text-[10px]">
-                      {dc.mw_current != null && (
-                        <span className="text-[#facc15]">
-                          ⚡ {dc.mw_current} MW
-                          {dc.mw_planned_max != null &&
-                            dc.mw_planned_max !== dc.mw_current && (
-                              <span className="text-white/40"> / {dc.mw_planned_max}</span>
-                            )}
-                        </span>
-                      )}
-                      {dc.status && (
-                        <span className="flex items-center gap-1 text-white/55 uppercase tracking-widest">
-                          <span
-                            className="w-1.5 h-1.5 rounded-full"
-                            style={{
-                              background:
-                                dc.status === 'operational' ? '#4ade80' : '#facc15',
-                            }}
-                          />
-                          {dc.status.replace(/_/g, ' ')}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+          {sortedInCountry.map((dc, i) => (
+            <SidebarRow
+              key={`${dc.name}-${i}`}
+              dc={dc}
+              isActive={selectedDc === dc || hoverDc === dc}
+              onHover={onRowHover}
+              onLeave={onRowLeave}
+              onSelect={onRowSelect}
+            />
+          ))}
         </div>
 
         <div className="px-6 py-3 border-t border-white/5 font-mono text-[10px] text-white/35 uppercase tracking-widest">
