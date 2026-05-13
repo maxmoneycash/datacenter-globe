@@ -16,7 +16,8 @@ interface GlobeProps {
 const POLYGON_BASE_ALT = 0.01;
 const POLYGON_HOVER_ALT = 0.06;
 const GLOBE_RADIUS = 100;       // three-globe internal radius
-const PIN_RADIUS = 100.5;       // pin layer sits just above globe surface
+const PIN_RADIUS_BASE = 100.6;  // pin layer just above base polygon (radius 101)
+const PIN_RADIUS_LIFTED = 106.6; // pin layer just above lifted polygon (radius 106)
 const PIN_SIZE = 2.6;           // world-unit size of each emoji sprite
 
 function featureName(d: any): string {
@@ -66,6 +67,7 @@ const Globe: React.FC<GlobeProps> = ({
   selectedCountryName,
 }) => {
   const globeRef = useRef<any>(null);
+  const pinGeometryRef = useRef<THREE.BufferGeometry | null>(null);
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoverD, setHoverD] = useState<any>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -190,10 +192,12 @@ const Globe: React.FC<GlobeProps> = ({
       }
     });
 
+    // Initial positions: all pins at base radius. The reactive update effect
+    // below moves the hovered/selected country's pins up to the lifted radius.
     const positions = new Float32Array(datacenters.length * 3);
     for (let i = 0; i < datacenters.length; i++) {
       const [lat, lng] = datacenters[i].city_coords!;
-      const v = polar2Cartesian(lat, lng, PIN_RADIUS);
+      const v = polar2Cartesian(lat, lng, PIN_RADIUS_BASE);
       positions[i * 3] = v.x;
       positions[i * 3 + 1] = v.y;
       positions[i * 3 + 2] = v.z;
@@ -201,6 +205,7 @@ const Globe: React.FC<GlobeProps> = ({
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    pinGeometryRef.current = geometry;
 
     const texture = makeEmojiTexture('📍');
 
@@ -225,8 +230,39 @@ const Globe: React.FC<GlobeProps> = ({
       geometry.dispose();
       material.dispose();
       texture.dispose();
+      pinGeometryRef.current = null;
     };
   }, [datacenters]);
+
+  /**
+   * Pins stick to the country surface. When a country lifts on hover/select,
+   * its pins lift with it. We rewrite the radial position of each affected
+   * pin in the existing BufferGeometry so the GPU re-uploads only the
+   * position buffer — much cheaper than rebuilding the whole mesh.
+   *
+   * We re-run every time hoverD or selectedCountryName changes. ~5,700 simple
+   * sin/cos calcs ≈ <1ms; fast enough to feel instant on every hover change.
+   */
+  useEffect(() => {
+    const geom = pinGeometryRef.current;
+    if (!geom) return;
+    const posAttr = geom.getAttribute('position') as THREE.BufferAttribute;
+    if (!posAttr) return;
+    const positions = posAttr.array as Float32Array;
+    const hoveredName = hoverD ? featureName(hoverD) : null;
+
+    for (let i = 0; i < datacenters.length; i++) {
+      const dc = datacenters[i];
+      const isLifted = dc.country === hoveredName || dc.country === selectedCountryName;
+      const r = isLifted ? PIN_RADIUS_LIFTED : PIN_RADIUS_BASE;
+      const [lat, lng] = dc.city_coords!;
+      const v = polar2Cartesian(lat, lng, r);
+      positions[i * 3] = v.x;
+      positions[i * 3 + 1] = v.y;
+      positions[i * 3 + 2] = v.z;
+    }
+    posAttr.needsUpdate = true;
+  }, [hoverD, selectedCountryName, datacenters]);
 
   const polygonBaseColorMap = useMemo(() => {
     const map = new WeakMap<object, string>();
