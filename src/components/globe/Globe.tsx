@@ -13,22 +13,31 @@ interface GlobeProps {
   selectedCountryName?: string | null;
 }
 
-// Pin altitude is essentially flat (just above the polygon's base altitude).
-// The trick that keeps them visible when a country lifts on hover: after
-// react-globe.gl mounts the merged points mesh, we patch its material so it
-// ignores depth-test and uses a high renderOrder. Result: dots always paint
-// on top of polygons in 2D screen space, regardless of how high the polygon
-// rises. No 3D cylinder lift needed.
-const PIN_ALT = 0.012;
 const POLYGON_BASE_ALT = 0.01;
 const POLYGON_HOVER_ALT = 0.06;
-const PIN_COLOR = '#d4d4d8'; // zinc-300 — bright neutral grey
-const PIN_RADIUS = 0.38;
+
+// react-globe.gl uses a globe radius of 100 internally.
+const GLOBE_RADIUS = 100;
+const PIN_RADIUS = 0.45;     // size of each flat disc in world units
+const PIN_OFFSET = 100.5;    // place dots just above the globe surface
+const PIN_COLOR = '#d4d4d8'; // zinc-300
 
 function featureName(d: any): string {
   return normalizeCountry(
     d?.properties?.ADMIN || d?.properties?.NAME || d?.properties?.name || d?.properties?.admin || ''
   );
+}
+
+// lat,lng → 3D position on a sphere of given radius. Same convention as
+// react-globe.gl / three-globe so our overlay aligns perfectly with the
+// underlying polygons.
+function latLngToVec3(lat: number, lng: number, r: number): THREE.Vector3 {
+  const phi = (90 - lat) * (Math.PI / 180);
+  const theta = (lng + 180) * (Math.PI / 180);
+  const x = -r * Math.sin(phi) * Math.cos(theta);
+  const z = r * Math.sin(phi) * Math.sin(theta);
+  const y = r * Math.cos(phi);
+  return new THREE.Vector3(x, y, z);
 }
 
 const Globe: React.FC<GlobeProps> = ({
@@ -40,13 +49,11 @@ const Globe: React.FC<GlobeProps> = ({
   selectedCountryName,
 }) => {
   const globeRef = useRef<any>(null);
+  const pinsMeshRef = useRef<THREE.InstancedMesh | null>(null);
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoverD, setHoverD] = useState<any>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
-  // Original look: PhysicalMaterial with cyan specular + clearcoat for the
-  // wet-glass globe sheen. (Switched back from Standard because the original
-  // visual signature relies on clearcoat highlights.)
   const customGlobeMaterial = useMemo(() => {
     return new THREE.MeshPhysicalMaterial({
       color: '#050505',
@@ -91,13 +98,12 @@ const Globe: React.FC<GlobeProps> = ({
     setRotation();
   }, [isPaused]);
 
+  // Scene scaffolding (grid + rim + lights) — original Gini visualization look
   useEffect(() => {
     if (!globeRef.current) return;
     const scene = globeRef.current.scene();
     if (!scene) return;
 
-    // Cyan holographic grid (restored from original aesthetic) — low subdivision
-    // to keep it cheap.
     const gridGeo = new THREE.SphereGeometry(101, 32, 16);
     const gridMat = new THREE.MeshBasicMaterial({
       color: '#00f0ff',
@@ -108,7 +114,6 @@ const Globe: React.FC<GlobeProps> = ({
     const gridMesh = new THREE.Mesh(gridGeo, gridMat);
     scene.add(gridMesh);
 
-    // Purple atmosphere rim
     const rimGeo = new THREE.SphereGeometry(100, 32, 32);
     const rimMat = new THREE.MeshBasicMaterial({
       color: '#8b5cf6',
@@ -126,7 +131,7 @@ const Globe: React.FC<GlobeProps> = ({
     const keyLight = new THREE.PointLight(0xffffff, 2.0);
     keyLight.position.set(200, 200, 200);
     scene.add(keyLight);
-    const fillLight = new THREE.PointLight(0x00f0ff, 1.6); // cyan accent fills the shadow side
+    const fillLight = new THREE.PointLight(0x00f0ff, 1.6);
     fillLight.position.set(-200, -100, -100);
     scene.add(fillLight);
 
@@ -139,7 +144,76 @@ const Globe: React.FC<GlobeProps> = ({
     };
   }, []);
 
-  // Precomputed per-polygon base color (no per-render bucketFor calls).
+  /**
+   * Custom flat-disc pin layer. Owned by us (not react-globe.gl), so we have
+   * total control over the material.
+   *
+   * Geometry: a real CircleGeometry → literally a 2D disc (no cylinder).
+   * Material: depthTest = false + renderOrder = 1000 → always paints on
+   *   top of polygons regardless of how high they lift on hover.
+   * Instancing: one InstancedMesh holds all 5,700 pins → one draw call.
+   *
+   * Each instance is oriented so its disc face points outward from the globe
+   * (i.e. tangent to the sphere at that lat/lng). We attach this to the same
+   * scene the globe controls, so it auto-rotates and orbits with the globe.
+   */
+  useEffect(() => {
+    if (!globeRef.current) return;
+    const scene = globeRef.current.scene();
+    if (!scene) return;
+    if (datacenters.length === 0) return;
+
+    // Find react-globe.gl's globe group so our pins rotate together with the
+    // globe (auto-rotation, orbit controls). The globe.gl scene tree includes
+    // a top-level group named "globe" or similar. We pick the first Group we
+    // find that has Mesh children — that's the globe.
+    let globeGroup: THREE.Object3D = scene;
+    scene.traverse((obj: any) => {
+      if (globeGroup !== scene) return;
+      if (obj.isGroup && obj.children?.some((c: any) => c.isMesh)) {
+        globeGroup = obj;
+      }
+    });
+
+    const geometry = new THREE.CircleGeometry(PIN_RADIUS, 12);
+    const material = new THREE.MeshBasicMaterial({
+      color: PIN_COLOR,
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    const mesh = new THREE.InstancedMesh(geometry, material, datacenters.length);
+    mesh.renderOrder = 1000;
+    mesh.frustumCulled = false;
+
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < datacenters.length; i++) {
+      const dc = datacenters[i];
+      const [lat, lng] = dc.city_coords!;
+      const pos = latLngToVec3(lat, lng, PIN_OFFSET);
+      dummy.position.copy(pos);
+      // CircleGeometry's default normal is +Z. lookAt(0,0,0) orients +Z
+      // away from origin = outward from the globe. So the disc faces outward.
+      dummy.lookAt(0, 0, 0);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+
+    globeGroup.add(mesh);
+    pinsMeshRef.current = mesh;
+
+    return () => {
+      globeGroup.remove(mesh);
+      geometry.dispose();
+      material.dispose();
+      pinsMeshRef.current = null;
+    };
+  }, [datacenters]);
+
+  // Polygon styling — original Gini visualization (lift + white on hover)
   const polygonBaseColorMap = useMemo(() => {
     const map = new WeakMap<object, string>();
     for (const f of countries.features) {
@@ -169,81 +243,6 @@ const Globe: React.FC<GlobeProps> = ({
 
   const polygonSideColor = useCallback(() => 'rgba(0, 0, 0, 0.5)', []);
   const polygonStrokeColor = useCallback(() => '#111111', []);
-
-  const points = useMemo(() => {
-    return datacenters.map((dc) => {
-      const [lat, lng] = dc.city_coords!;
-      return { lat, lng, color: PIN_COLOR };
-    });
-  }, [datacenters]);
-
-  // === The "always-on-top flat dots" trick ===
-  // After the points mesh is created, walk the scene, find it, and disable
-  // depth-testing on its material + set a high renderOrder. The points then
-  // paint last and never get occluded by polygons (even when a country lifts).
-  // We re-run when the dataset size changes (rare — basically once on mount).
-  useEffect(() => {
-    if (!globeRef.current || points.length === 0) return;
-    let raf = 0;
-    let tries = 0;
-
-    const tryPatch = () => {
-      const globe = globeRef.current;
-      const scene = globe?.scene?.();
-      if (!scene) {
-        raf = requestAnimationFrame(tryPatch);
-        return;
-      }
-      // Find the merged points mesh. react-globe.gl tags its objects via the
-      // __globeObjType / userData convention. We fall back to a vertex-count
-      // heuristic if that's missing.
-      let pointsMesh: THREE.Mesh | null = null;
-      scene.traverse((obj: any) => {
-        if (pointsMesh) return;
-        if (obj?.isMesh && obj.material && obj.geometry) {
-          if (
-            obj.__globeObjType === 'points' ||
-            obj.userData?.__globeObjType === 'points' ||
-            obj.name === 'Points'
-          ) {
-            pointsMesh = obj;
-          }
-        }
-      });
-      // Fallback heuristic: a mesh with many vertices that isn't the globe sphere.
-      // The globe sphere has 75×75 verts; merged points with ~5,700 markers
-      // × 7 verts per cylinder ≈ 40,000 — much larger.
-      if (!pointsMesh) {
-        scene.traverse((obj: any) => {
-          if (pointsMesh) return;
-          if (
-            obj?.isMesh &&
-            obj.material &&
-            obj.geometry?.attributes?.position?.count > 20000 &&
-            obj.geometry.attributes.position.count < 100000
-          ) {
-            pointsMesh = obj;
-          }
-        });
-      }
-
-      if (pointsMesh) {
-        const mat = (pointsMesh as THREE.Mesh).material as THREE.Material;
-        // Cast to access the standard material properties uniformly.
-        (mat as any).depthTest = false;
-        (mat as any).depthWrite = false;
-        (mat as any).transparent = true;
-        (mat as any).needsUpdate = true;
-        (pointsMesh as THREE.Mesh).renderOrder = 1000;
-      } else if (tries < 30) {
-        tries++;
-        raf = requestAnimationFrame(tryPatch);
-      }
-    };
-
-    raf = requestAnimationFrame(tryPatch);
-    return () => cancelAnimationFrame(raf);
-  }, [points]);
 
   const handlePolygonHover = useCallback((d: any) => {
     setHoverD((prev: any) => (prev === d ? prev : d));
@@ -303,15 +302,6 @@ const Globe: React.FC<GlobeProps> = ({
         showAtmosphere={true}
         atmosphereColor="#8b5cf6"
         atmosphereAltitude={0.15}
-        pointsData={points}
-        pointLat="lat"
-        pointLng="lng"
-        pointColor="color"
-        pointAltitude={PIN_ALT}
-        pointRadius={PIN_RADIUS}
-        pointResolution={8}
-        pointsMerge={true}
-        pointsTransitionDuration={0}
       />
     </div>
   );
