@@ -256,10 +256,12 @@ const Globe: React.FC<GlobeProps> = ({
     pinsMesh.frustumCulled = false;
 
     // Move pins to a separate raycast layer so react-globe.gl's raycaster
-    // (which uses default layer 0) never sees them. Otherwise pins intercept
-    // country clicks and make us click multiple times before the polygon
-    // hit registers.
+    // (default layer 0) doesn't intercept clicks meant for the country polygons.
+    // ALSO enable layer 1 on the camera so the pins still render (three.js
+    // cameras only render objects on layers they have enabled).
     pinsMesh.layers.set(PIN_RAYCAST_LAYER);
+    const camera = globeRef.current.camera?.();
+    if (camera) camera.layers.enable(PIN_RAYCAST_LAYER);
 
     scene.add(pinsMesh);
     pinsMeshRef.current = pinsMesh;
