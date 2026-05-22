@@ -4,6 +4,8 @@ import * as THREE from 'three';
 import type { CountryStat, Datacenter } from './types';
 import { BUCKET_COLORS, bucketFor, normalizeCountry } from './constants';
 import { useIsTouch } from './useIsMobile';
+import { CLOUD_REGIONS, CLOUD_COLORS, type CloudProvider } from './cloudRegions';
+import { HYPERSCALER_COLORS, type Hyperscaler } from './hyperscalers';
 
 interface GlobeProps {
   datacenters: Datacenter[];
@@ -12,6 +14,9 @@ interface GlobeProps {
   isPaused: boolean;
   onBackgroundClick: () => void;
   selectedCountryName?: string | null;
+  cables?: any | null;
+  shownClouds?: Set<CloudProvider>;
+  hyperscalerFilter?: Exclude<Hyperscaler, null> | null;
 }
 
 const PIN_RAYCAST_LAYER = 1;
@@ -68,6 +73,9 @@ const Globe: React.FC<GlobeProps> = ({
   isPaused,
   onBackgroundClick,
   selectedCountryName,
+  cables,
+  shownClouds,
+  hyperscalerFilter,
 }) => {
   const globeRef = useRef<any>(null);
   const pinsMeshRef = useRef<THREE.Points | null>(null);
@@ -394,6 +402,46 @@ const Globe: React.FC<GlobeProps> = ({
     [countryStats]
   );
 
+  // ─── Cables: transform GeoJSON MultiLineString features into react-globe.gl
+  // pathsData. Each cable can be many line segments; flatten them so each
+  // segment becomes its own path.
+  const cablePaths = useMemo(() => {
+    if (!cables?.features) return [];
+    const out: { pts: [number, number][]; color: string; name: string }[] = [];
+    for (const feat of cables.features) {
+      const color = feat.properties?.color || '#22d3ee';
+      const name = feat.properties?.name || '';
+      if (feat.geometry?.type === 'MultiLineString') {
+        for (const line of feat.geometry.coordinates) {
+          out.push({
+            pts: (line as [number, number][]).map((p) => [p[1], p[0]]),
+            color,
+            name,
+          });
+        }
+      } else if (feat.geometry?.type === 'LineString') {
+        out.push({
+          pts: (feat.geometry.coordinates as [number, number][]).map((p) => [p[1], p[0]]),
+          color,
+          name,
+        });
+      }
+    }
+    return out;
+  }, [cables]);
+
+  // ─── Cloud region markers: filtered subset of CLOUD_REGIONS by toggle state.
+  const cloudPoints = useMemo(() => {
+    if (!shownClouds || shownClouds.size === 0) return [];
+    return CLOUD_REGIONS.filter((r) => shownClouds.has(r.provider)).map((r) => ({
+      ...r,
+      label: `${r.provider} · ${r.code}`,
+      color: CLOUD_COLORS[r.provider],
+    }));
+  }, [shownClouds]);
+
+  const hyperscalerActiveColor = hyperscalerFilter ? HYPERSCALER_COLORS[hyperscalerFilter] : null;
+
   return (
     <div className="relative w-full h-screen bg-[#0c0c0e] cursor-crosshair">
       {hoveredPin && (
@@ -450,6 +498,23 @@ const Globe: React.FC<GlobeProps> = ({
         showAtmosphere={true}
         atmosphereColor="#8b5cf6"
         atmosphereAltitude={0.15}
+        pathsData={cablePaths}
+        pathPoints="pts"
+        pathPointLat={(p: any) => p[0]}
+        pathPointLng={(p: any) => p[1]}
+        pathColor={(d: any) => d.color}
+        pathStroke={0.4}
+        pathDashLength={0}
+        pathDashGap={0}
+        pathTransitionDuration={0}
+        labelsData={cloudPoints}
+        labelLat="lat"
+        labelLng="lng"
+        labelText="label"
+        labelSize={0.5}
+        labelDotRadius={0.4}
+        labelColor={(d: any) => d.color}
+        labelResolution={2}
       />
     </div>
   );

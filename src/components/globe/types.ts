@@ -15,6 +15,19 @@ export interface Datacenter {
   status?: string | null;
   confidence?: number | null;
   source_url?: string | null;
+  // Derived at load time from the company name — see hyperscalers.ts
+  hyperscaler?:
+    | 'AWS'
+    | 'Microsoft'
+    | 'Google'
+    | 'Meta'
+    | 'Apple'
+    | 'Oracle'
+    | 'IBM'
+    | 'Alibaba'
+    | 'Tencent'
+    | 'ByteDance'
+    | null;
 }
 
 export interface CountryStat {

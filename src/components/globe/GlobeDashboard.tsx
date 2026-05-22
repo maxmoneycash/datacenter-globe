@@ -8,7 +8,10 @@ import Globe from './Globe';
 import Legend from './Legend';
 import FpsCounter from './FpsCounter';
 import CountryPanel from './CountryPanel';
+import FilterHUD from './FilterHUD';
 import { useIsMobile } from './useIsMobile';
+import { classifyHyperscaler, type Hyperscaler } from './hyperscalers';
+import type { CloudProvider } from './cloudRegions';
 import type { Datacenter, CountryStat } from './types';
 
 const TourApp = dynamic(() => import('@/src/tour/TourApp'), {
@@ -32,6 +35,12 @@ const GlobeDashboard: React.FC = () => {
   const [viewport, setViewport] = useState({ w: 1440, h: 900 });
   const isMobile = useIsMobile();
 
+  // Layer toggles + filters (all stored as Sets so the component diff is cheap)
+  const [showCables, setShowCables] = useState(false);
+  const [shownClouds, setShownClouds] = useState<Set<CloudProvider>>(new Set());
+  const [hyperscalerFilter, setHyperscalerFilter] = useState<Exclude<Hyperscaler, null> | null>(null);
+  const [cables, setCables] = useState<any>(null);
+
   useEffect(() => {
     setViewport({ w: window.innerWidth, h: window.innerHeight });
     const handle = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
@@ -45,14 +54,18 @@ const GlobeDashboard: React.FC = () => {
       fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson').then((r) => r.json()),
     ])
       .then(([dc, geo]) => {
-        const filtered = (dc as Datacenter[]).filter(
-          (d) =>
-            d.city_coords &&
-            d.city_coords.length === 2 &&
-            typeof d.city_coords[0] === 'number' &&
-            typeof d.city_coords[1] === 'number'
-        );
-        setDatacenters(filtered);
+        // Tag each record with its hyperscaler at load time so downstream
+        // components don't redo the classification on every render.
+        const tagged: Datacenter[] = (dc as Datacenter[])
+          .filter(
+            (d) =>
+              d.city_coords &&
+              d.city_coords.length === 2 &&
+              typeof d.city_coords[0] === 'number' &&
+              typeof d.city_coords[1] === 'number'
+          )
+          .map((d) => ({ ...d, hyperscaler: classifyHyperscaler(d.company) }));
+        setDatacenters(tagged);
         setCountries(geo);
         setLoading(false);
       })
@@ -62,6 +75,21 @@ const GlobeDashboard: React.FC = () => {
         setLoading(false);
       });
   }, []);
+
+  // Lazy-load 1.5MB cables file only when the user first turns the layer on.
+  useEffect(() => {
+    if (!showCables || cables) return;
+    fetch('/cables.json')
+      .then((r) => r.json())
+      .then(setCables)
+      .catch((err) => console.error('Failed to load cables', err));
+  }, [showCables, cables]);
+
+  // Apply hyperscaler filter — produces the dataset shown on the globe + map.
+  const visibleDatacenters = useMemo(() => {
+    if (!hyperscalerFilter) return datacenters;
+    return datacenters.filter((d) => d.hyperscaler === hyperscalerFilter);
+  }, [datacenters, hyperscalerFilter]);
 
   const countryStats = useMemo<Map<string, CountryStat>>(() => {
     const byCountry = new Map<string, Datacenter[]>();
@@ -89,12 +117,15 @@ const GlobeDashboard: React.FC = () => {
   return (
     <div className="relative w-full h-screen bg-[#0c0c0e] overflow-hidden text-white">
       <Globe
-        datacenters={datacenters}
+        datacenters={visibleDatacenters}
         countryStats={countryStats}
         onCountryClick={(name) => setSelectedCountry(name)}
         isPaused={!!selectedCountry}
         onBackgroundClick={() => {}}
         selectedCountryName={selectedCountry}
+        cables={showCables ? cables : null}
+        shownClouds={shownClouds}
+        hyperscalerFilter={hyperscalerFilter}
       />
 
       {/* HUD header — condensed on mobile so it doesn't overlap the globe */}
@@ -136,6 +167,28 @@ const GlobeDashboard: React.FC = () => {
 
       {/* Legend hidden on mobile — too crowded. Stats shown in header instead. */}
       {!isMobile && <Legend totalSites={totalSites} totalCountries={totalCountries} />}
+
+      {/* Filter HUD — toggleable layers + hyperscaler filter */}
+      {!loading && !selectedCountry && (
+        <FilterHUD
+          isMobile={isMobile}
+          showCables={showCables}
+          onToggleCables={() => setShowCables((v) => !v)}
+          shownClouds={shownClouds}
+          onToggleCloud={(c) =>
+            setShownClouds((prev) => {
+              const next = new Set(prev);
+              if (next.has(c)) next.delete(c);
+              else next.add(c);
+              return next;
+            })
+          }
+          hyperscalerFilter={hyperscalerFilter}
+          onSetHyperscaler={setHyperscalerFilter}
+          visibleCount={visibleDatacenters.length}
+          totalCount={datacenters.length}
+        />
+      )}
 
       {!isMobile && (
         <div
