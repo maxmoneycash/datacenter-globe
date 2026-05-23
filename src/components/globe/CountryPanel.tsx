@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, memo, useEffect } from 'react';
+import React, { useMemo, useState, useCallback, memo, useEffect, useRef } from 'react';
 import { X, MapPin, Building2, Box, Zap, ExternalLink } from 'lucide-react';
 import { geoMercator, geoPath, geoArea } from 'd3-geo';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -24,8 +24,14 @@ interface Props {
 const LEFT_PANEL_WIDTH = 340;
 
 // 📍 emoji markers — match the world-globe view.
-const PIN_FONT_SIZE = 18;
-const PIN_FONT_SIZE_HOVER = 26;
+// 📍 canvas pin sizes
+const PIN_SIZE = 18;
+const PIN_SIZE_HOVER = 26;
+const PIN_HIT_RADIUS = 14;
+
+// Sidebar row virtualization
+const ROW_HEIGHT = 88;
+const ROW_OVERSCAN = 6;
 
 // Sidebar row — memoized so hovering or selecting one row doesn't re-render
 // the other 2,000+ rows for a country like the United States.
@@ -52,9 +58,10 @@ const SidebarRow = memo(function SidebarRow({
       onMouseEnter={() => onHover(dc)}
       onMouseLeave={() => onLeave(dc)}
       className={`w-full text-left border-b border-white/5 transition-colors ${
-        isMobile ? 'px-4 py-2.5' : 'px-6 py-3'
+        isMobile ? 'px-4' : 'px-6'
       }`}
       style={{
+        height: ROW_HEIGHT,
         background: isActive ? 'rgba(255,159,67,0.10)' : 'transparent',
         borderLeft: isActive ? '2px solid #ff9f43' : '2px solid transparent',
       }}
@@ -106,6 +113,27 @@ const CountryPanel: React.FC<Props> = ({
   const [selectedDc, setSelectedDc] = useState<Datacenter | null>(initialSelectedDc ?? null);
   const [hoverDc, setHoverDc] = useState<Datacenter | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pinSpriteRef = useRef<HTMLCanvasElement | null>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [sidebarHeight, setSidebarHeight] = useState(600);
+  const [sidebarScroll, setSidebarScroll] = useState(0);
+
+  // One-time: render the 📍 emoji to an offscreen canvas — reused as a sprite
+  // for every pin draw. Avoids per-frame text shaping (super slow at 2,800 pins).
+  useEffect(() => {
+    const c = document.createElement('canvas');
+    const dpr = window.devicePixelRatio || 1;
+    c.width = 48 * dpr;
+    c.height = 48 * dpr;
+    const ctx = c.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    ctx.font = '38px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('📍', 24, 26);
+    pinSpriteRef.current = c;
+  }, []);
 
   useEffect(() => {
     if (initialSelectedDc) {
@@ -212,14 +240,129 @@ const CountryPanel: React.FC<Props> = ({
   }, [feature, projectionFeature, inCountry, mapLeft, mapWidth, mapHeight, isMobile]);
 
   // Outlying-territory pins (those outside the mainland fit) — render at edge as "off-map" markers
-  const visiblePins = pins.filter(
-    (p) =>
-      p.x >= mapLeft - 10 &&
-      p.x <= mapLeft + mapWidth + 10 &&
-      p.y >= -10 &&
-      p.y <= mapHeight + 10
+  const visiblePins = useMemo(
+    () =>
+      pins.filter(
+        (p) =>
+          p.x >= mapLeft - 10 &&
+          p.x <= mapLeft + mapWidth + 10 &&
+          p.y >= -10 &&
+          p.y <= mapHeight + 10
+      ),
+    [pins, mapLeft, mapWidth, mapHeight]
   );
   const offMapCount = pins.length - visiblePins.length;
+
+  // ─── Canvas pin layer: redraws whenever pins or active state changes.
+  // 2,800 drawImage calls ≈ 3ms; cheaper than 2,800 SVG <text> repaints.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const sprite = pinSpriteRef.current;
+    if (!canvas || !sprite) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cw = width;
+    const ch = isMobile ? mapHeight : height;
+    canvas.width = cw * dpr;
+    canvas.height = ch * dpr;
+    canvas.style.width = `${cw}px`;
+    canvas.style.height = `${ch}px`;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    // Draw inactive pins first
+    for (const p of visiblePins) {
+      if (p.dc === selectedDc || p.dc === hoverDc) continue;
+      ctx.drawImage(sprite, p.x - PIN_SIZE / 2, p.y - PIN_SIZE / 2, PIN_SIZE, PIN_SIZE);
+    }
+    // Draw active pins last (on top, larger, with glow)
+    for (const p of visiblePins) {
+      const isActive = p.dc === selectedDc || p.dc === hoverDc;
+      if (!isActive) continue;
+      const sz = PIN_SIZE_HOVER;
+      ctx.save();
+      ctx.shadowColor = 'rgba(255, 159, 67, 0.95)';
+      ctx.shadowBlur = 10;
+      ctx.drawImage(sprite, p.x - sz / 2, p.y - sz / 2, sz, sz);
+      ctx.restore();
+    }
+  }, [visiblePins, selectedDc, hoverDc, width, height, mapHeight, isMobile]);
+
+  // ─── Canvas hit testing: RAF-throttled nearest-pin lookup.
+  const lastMoveRef = useRef<{ x: number; y: number } | null>(null);
+  const rafRef = useRef<number>(0);
+
+  const runHitTest = useCallback(() => {
+    rafRef.current = 0;
+    const m = lastMoveRef.current;
+    if (!m) return;
+    let nearest: { dc: Datacenter; x: number; y: number } | null = null;
+    let bestDist = PIN_HIT_RADIUS;
+    for (const p of visiblePins) {
+      const dx = p.x - m.x;
+      const dy = p.y - m.y;
+      const d = Math.hypot(dx, dy);
+      if (d < bestDist) {
+        bestDist = d;
+        nearest = p;
+      }
+    }
+    if (nearest) {
+      setHoverDc((prev) => (prev === nearest!.dc ? prev : nearest!.dc));
+      setHoverPos({ x: nearest.x, y: nearest.y });
+    } else {
+      setHoverDc((prev) => (prev === null ? prev : null));
+    }
+  }, [visiblePins]);
+
+  const handleCanvasMove = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      lastMoveRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      if (!rafRef.current) rafRef.current = requestAnimationFrame(runHitTest);
+    },
+    [runHitTest]
+  );
+
+  const handleCanvasLeave = useCallback(() => {
+    lastMoveRef.current = null;
+    setHoverDc((prev) => (prev === null ? prev : null));
+  }, []);
+
+  const handleCanvasClick = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      let nearest: { dc: Datacenter } | null = null;
+      let bestDist = PIN_HIT_RADIUS;
+      for (const p of visiblePins) {
+        const d = Math.hypot(p.x - x, p.y - y);
+        if (d < bestDist) {
+          bestDist = d;
+          nearest = p;
+        }
+      }
+      if (nearest) setSelectedDc(nearest.dc);
+    },
+    [visiblePins]
+  );
+
+  // ─── Sidebar virtualization: track container height + scroll
+  useEffect(() => {
+    const el = sidebarRef.current;
+    if (!el) return;
+    const measure = () => setSidebarHeight(el.clientHeight);
+    measure();
+    const onScroll = () => setSidebarScroll(el.scrollTop);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      ro.disconnect();
+    };
+  }, []);
 
   return (
     <motion.div
@@ -229,10 +372,21 @@ const CountryPanel: React.FC<Props> = ({
       transition={{ duration: 0.3 }}
       className="absolute inset-0 z-20 bg-[#0c0c0e]/95 backdrop-blur-xl"
     >
+      {/* Pin layer — canvas, NOT svg. Single element, 2,800+ pins is no
+          problem because each pin is just a drawImage call (~µs each). */}
+      <canvas
+        ref={canvasRef}
+        onMouseMove={handleCanvasMove}
+        onMouseLeave={handleCanvasLeave}
+        onClick={handleCanvasClick}
+        className="absolute top-0 left-0"
+        style={{ cursor: hoverDc ? 'pointer' : 'default', zIndex: 1 }}
+      />
+
       <motion.svg
         width={isMobile ? width : width}
         height={isMobile ? mapHeight : height}
-        className="absolute top-0 left-0"
+        className="absolute top-0 left-0 pointer-events-none"
         initial={{ scale: 0.92, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
@@ -260,36 +414,7 @@ const CountryPanel: React.FC<Props> = ({
           />
         )}
 
-        {/* 📍 emoji markers — single <text> per pin. The text element itself is
-            the hit target (its bounding box is ~18×18, plenty clickable). Cuts
-            DOM nodes per pin from 3 → 1 — saves ~6,000 nodes in the US view. */}
-        {visiblePins.map((p, i) => {
-          const isActive = selectedDc === p.dc || hoverDc === p.dc;
-          return (
-            <text
-              key={i}
-              x={p.x}
-              y={p.y}
-              fontSize={isActive ? PIN_FONT_SIZE_HOVER : PIN_FONT_SIZE}
-              textAnchor="middle"
-              dominantBaseline="central"
-              style={{
-                cursor: 'pointer',
-                filter: isActive
-                  ? 'drop-shadow(0 0 6px rgba(255,159,67,0.9))'
-                  : 'drop-shadow(0 0 2px rgba(0,0,0,0.85))',
-              }}
-              onMouseEnter={() => {
-                setHoverDc(p.dc);
-                setHoverPos({ x: p.x, y: p.y });
-              }}
-              onMouseLeave={() => setHoverDc((curr) => (curr === p.dc ? null : curr))}
-              onClick={() => setSelectedDc(p.dc)}
-            >
-              📍
-            </text>
-          );
-        })}
+        {/* Pins are drawn on the canvas above — no SVG pin nodes anymore. */}
       </motion.svg>
 
       {/* Left stats panel — desktop: side column. Mobile: stacks under the map. */}
@@ -329,19 +454,39 @@ const CountryPanel: React.FC<Props> = ({
           )}
         </div>
 
-        {/* Scrolling list of every datacenter in country, sorted by MW desc then name */}
-        <div className="flex-1 overflow-y-auto">
-          {sortedInCountry.map((dc, i) => (
-            <SidebarRow
-              key={`${dc.name}-${i}`}
-              dc={dc}
-              isActive={selectedDc === dc || hoverDc === dc}
-              isMobile={isMobile}
-              onHover={onRowHover}
-              onLeave={onRowLeave}
-              onSelect={onRowSelect}
-            />
-          ))}
+        {/* Virtualized scrolling list — only renders the rows actually visible
+            in the viewport (~25 of 2,800 for the US). Massive memory and paint
+            cost reduction for big countries. */}
+        <div ref={sidebarRef} className="flex-1 overflow-y-auto relative">
+          {(() => {
+            const total = sortedInCountry.length;
+            const firstIndex = Math.max(
+              0,
+              Math.floor(sidebarScroll / ROW_HEIGHT) - ROW_OVERSCAN
+            );
+            const lastIndex = Math.min(
+              total,
+              Math.ceil((sidebarScroll + sidebarHeight) / ROW_HEIGHT) + ROW_OVERSCAN
+            );
+            const slice = sortedInCountry.slice(firstIndex, lastIndex);
+            return (
+              <div style={{ height: total * ROW_HEIGHT, position: 'relative' }}>
+                <div style={{ position: 'absolute', top: firstIndex * ROW_HEIGHT, left: 0, right: 0 }}>
+                  {slice.map((dc, i) => (
+                    <SidebarRow
+                      key={`${dc.name}-${firstIndex + i}`}
+                      dc={dc}
+                      isActive={selectedDc === dc || hoverDc === dc}
+                      isMobile={isMobile}
+                      onHover={onRowHover}
+                      onLeave={onRowLeave}
+                      onSelect={onRowSelect}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         <div
