@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, memo } from 'react';
+import React, { useMemo, useState, useCallback, memo, useEffect } from 'react';
 import { X, MapPin, Building2, Box, Zap, ExternalLink } from 'lucide-react';
 import { geoMercator, geoPath, geoArea } from 'd3-geo';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -15,6 +15,9 @@ interface Props {
   onEnterTour?: (dc: Datacenter) => void;
   width: number;
   height: number;
+  // Optional pre-selected datacenter (e.g. from search box). Auto-opens its card on mount.
+  initialSelectedDc?: Datacenter | null;
+  onConsumedInitialDc?: () => void;
 }
 
 // Reserve a fixed left column for the stats panel; the map takes the rest.
@@ -97,10 +100,20 @@ const CountryPanel: React.FC<Props> = ({
   onEnterTour,
   width,
   height,
+  initialSelectedDc,
+  onConsumedInitialDc,
 }) => {
-  const [selectedDc, setSelectedDc] = useState<Datacenter | null>(null);
+  const [selectedDc, setSelectedDc] = useState<Datacenter | null>(initialSelectedDc ?? null);
   const [hoverDc, setHoverDc] = useState<Datacenter | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (initialSelectedDc) {
+      setSelectedDc(initialSelectedDc);
+      onConsumedInitialDc?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSelectedDc]);
 
   const feature = useMemo(() => {
     return countries.features.find((f: any) => {

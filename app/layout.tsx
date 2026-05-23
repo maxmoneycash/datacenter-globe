@@ -8,7 +8,23 @@ const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin']
 export const metadata: Metadata = {
   title: 'Datacenter Globe — 3D Datacenter Map',
   description:
-    'Interactive 3D globe of datacenters around the world. Click into a country to explore, click a site for a virtual tour.',
+    'Interactive 3D atlas of ~18,000 datacenters, public-cloud regions, and the global submarine cable network. Click a country to explore; click a site for a virtual tour.',
+  openGraph: {
+    title: 'Datacenter Globe',
+    description:
+      'Interactive 3D atlas of ~18,000 datacenters, public-cloud regions, and the global submarine cable network.',
+    url: 'https://datacenter-globe.vercel.app',
+    siteName: 'Datacenter Globe',
+    images: [{ url: '/og.png', width: 1440, height: 900, alt: 'Datacenter Globe' }],
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Datacenter Globe',
+    description:
+      'Interactive 3D atlas of ~18,000 datacenters worldwide. Click any country, search any operator, drop into a virtual tour.',
+    images: ['/og.png'],
+  },
 };
 
 export const viewport: Viewport = {

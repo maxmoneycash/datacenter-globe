@@ -9,6 +9,8 @@ import Legend from './Legend';
 import FpsCounter from './FpsCounter';
 import CountryPanel from './CountryPanel';
 import FilterHUD from './FilterHUD';
+import SearchBox from './SearchBox';
+import NearestPanel from './NearestPanel';
 import { useIsMobile } from './useIsMobile';
 import { classifyHyperscaler, type Hyperscaler } from './hyperscalers';
 import type { CloudProvider } from './cloudRegions';
@@ -40,6 +42,9 @@ const GlobeDashboard: React.FC = () => {
   const [shownClouds, setShownClouds] = useState<Set<CloudProvider>>(new Set());
   const [hyperscalerFilter, setHyperscalerFilter] = useState<Exclude<Hyperscaler, null> | null>(null);
   const [cables, setCables] = useState<any>(null);
+  // When something in search / nearest panel sets a "pending" datacenter,
+  // the CountryPanel auto-selects it after the country view opens.
+  const [pendingSelectDc, setPendingSelectDc] = useState<Datacenter | null>(null);
 
   useEffect(() => {
     setViewport({ w: window.innerWidth, h: window.innerHeight });
@@ -168,6 +173,24 @@ const GlobeDashboard: React.FC = () => {
       {/* Legend hidden on mobile — too crowded. Stats shown in header instead. */}
       {!isMobile && <Legend totalSites={totalSites} totalCountries={totalCountries} />}
 
+      {/* Search box (top-center) and "Closest to me" (top-left) */}
+      {!loading && !selectedCountry && (
+        <>
+          <SearchBox
+            datacenters={datacenters}
+            isMobile={isMobile}
+            onSelectCountry={(name) => setSelectedCountry(name)}
+            onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
+          />
+          <NearestPanel
+            datacenters={datacenters}
+            isMobile={isMobile}
+            onSelectCountry={(name) => setSelectedCountry(name)}
+            onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
+          />
+        </>
+      )}
+
       {/* Filter HUD — toggleable layers + hyperscaler filter */}
       {!loading && !selectedCountry && (
         <FilterHUD
@@ -217,10 +240,15 @@ const GlobeDashboard: React.FC = () => {
             countries={countries}
             datacenters={datacenters}
             stat={countryStats.get(selectedCountry)}
-            onClose={() => setSelectedCountry(null)}
+            onClose={() => {
+              setSelectedCountry(null);
+              setPendingSelectDc(null);
+            }}
             onEnterTour={(dc) => setTourDc(dc)}
             width={viewport.w}
             height={viewport.h}
+            initialSelectedDc={pendingSelectDc}
+            onConsumedInitialDc={() => setPendingSelectDc(null)}
           />
         )}
       </AnimatePresence>
