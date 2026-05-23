@@ -317,18 +317,7 @@ const GlobeDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile-only hint — anchored to bottom safe area */}
-      {isMobile && !loading && !selectedCountry && (
-        <div
-          className="absolute z-10 left-1/2 -translate-x-1/2 pointer-events-none uppercase tracking-widest text-[10px] text-white/45 text-center px-4"
-          style={{
-            fontFamily: 'JetBrains Mono, monospace',
-            bottom: 'calc(env(safe-area-inset-bottom) + 12px)',
-          }}
-        >
-          Drag · pinch · tap
-        </div>
-      )}
+      {/* Mobile bottom hint removed — bottom area now occupied by Near me + Layers chips */}
 
       <AnimatePresence>
         {selectedCountry && !tourDc && (

@@ -51,7 +51,8 @@ const HyperscalerStats: React.FC<Props> = ({ hyperscaler, datacenters, isMobile 
       style={{
         borderColor: `${color}40`,
         width: isMobile ? undefined : 280,
-        bottom: isMobile ? 'calc(env(safe-area-inset-bottom) + 12px)' : undefined,
+        // On mobile, sit ABOVE the bottom chips (chips are ~12px from safe-area + ~42px tall = ~64px reserved)
+        bottom: isMobile ? 'calc(env(safe-area-inset-bottom) + 70px)' : undefined,
         fontFamily: 'JetBrains Mono, monospace',
       }}
     >

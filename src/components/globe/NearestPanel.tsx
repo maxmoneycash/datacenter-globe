@@ -71,12 +71,13 @@ const NearestPanel: React.FC<Props> = ({
 
   return (
     <>
-      {/* Trigger chip — desktop: positioned BELOW the header to avoid overlap */}
+      {/* Trigger chip — desktop: top-left below header. Mobile: bottom-left so
+          it never collides with the search dropdown at the top of the screen. */}
       <div
-        className={`absolute z-20 pointer-events-auto ${isMobile ? 'left-3' : 'top-24 left-6'}`}
+        className={`absolute z-30 pointer-events-auto ${isMobile ? 'left-3' : 'top-24 left-6'}`}
         style={
           isMobile
-            ? { top: 'calc(env(safe-area-inset-top) + 112px)' }
+            ? { bottom: 'calc(env(safe-area-inset-bottom) + 12px)' }
             : undefined
         }
       >

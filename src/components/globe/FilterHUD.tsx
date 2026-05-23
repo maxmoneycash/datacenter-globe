@@ -47,10 +47,10 @@ const FilterHUD: React.FC<Props> = ({
 
   return (
     <div
-      className={`absolute z-20 pointer-events-auto ${isMobile ? 'right-3' : 'top-6 right-6'}`}
+      className={`absolute z-30 pointer-events-auto ${isMobile ? 'right-3' : 'top-6 right-6'}`}
       style={
         isMobile
-          ? { top: 'calc(env(safe-area-inset-top) + 112px)' }
+          ? { bottom: 'calc(env(safe-area-inset-bottom) + 12px)' }
           : undefined
       }
     >
@@ -91,11 +91,13 @@ const FilterHUD: React.FC<Props> = ({
       <AnimatePresence>
         {open && (
           <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.96 }}
+            initial={{ opacity: 0, y: isMobile ? 8 : -8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.97 }}
+            exit={{ opacity: 0, y: isMobile ? 4 : -4, scale: 0.97 }}
             transition={{ duration: 0.18, ease: [0.4, 0, 0.2, 1] }}
-            className="absolute right-0 mt-2 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/15 rounded-xl shadow-2xl overflow-hidden"
+            className={`absolute right-0 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/15 rounded-xl shadow-2xl overflow-hidden ${
+              isMobile ? 'bottom-full mb-2 max-h-[70vh] overflow-y-auto' : 'mt-2'
+            }`}
             style={{
               width: isMobile ? 260 : 280,
               fontFamily: 'JetBrains Mono, monospace',
