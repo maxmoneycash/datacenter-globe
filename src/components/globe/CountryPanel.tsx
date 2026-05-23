@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, memo, useEffect, useRef } from 'react';
-import { X, MapPin, Building2, Box, Zap, ExternalLink } from 'lucide-react';
+import { X, MapPin, Building2, Box, Zap, ExternalLink, Eye } from 'lucide-react';
 import { geoMercator, geoPath, geoArea } from 'd3-geo';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Datacenter, CountryStat } from './types';
@@ -24,10 +24,10 @@ interface Props {
 const LEFT_PANEL_WIDTH = 340;
 
 // 📍 emoji markers — match the world-globe view.
-// 📍 canvas pin sizes
-const PIN_SIZE = 18;
-const PIN_SIZE_HOVER = 26;
-const PIN_HIT_RADIUS = 14;
+// 📍 canvas pin sizes (sprite is 56×56 with halo → display sized for readability)
+const PIN_SIZE = 26;
+const PIN_SIZE_HOVER = 36;
+const PIN_HIT_RADIUS = 18;
 
 // Sidebar row virtualization
 const ROW_HEIGHT = 88;
@@ -121,18 +121,32 @@ const CountryPanel: React.FC<Props> = ({
   const [sidebarScroll, setSidebarScroll] = useState(0);
 
   // One-time: render the 📍 emoji to an offscreen canvas — reused as a sprite
-  // for every pin draw. Avoids per-frame text shaping (super slow at 2,800 pins).
+  // for every pin draw. Includes a dark circular halo + drop shadow so pins
+  // remain visible on bright country fills (red/yellow/orange).
   useEffect(() => {
     const c = document.createElement('canvas');
     const dpr = window.devicePixelRatio || 1;
-    c.width = 48 * dpr;
-    c.height = 48 * dpr;
+    c.width = 56 * dpr;
+    c.height = 56 * dpr;
     const ctx = c.getContext('2d')!;
     ctx.scale(dpr, dpr);
-    ctx.font = '38px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+    // Dark halo behind the pin — translucent black disc with soft edge
+    const grad = ctx.createRadialGradient(28, 30, 4, 28, 30, 16);
+    grad.addColorStop(0, 'rgba(0,0,0,0.85)');
+    grad.addColorStop(0.7, 'rgba(0,0,0,0.55)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(28, 30, 16, 0, Math.PI * 2);
+    ctx.fill();
+    // Emoji with a hard black shadow for extra punch on any background
+    ctx.shadowColor = 'rgba(0,0,0,0.95)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 1;
+    ctx.font = '34px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('📍', 24, 26);
+    ctx.fillText('📍', 28, 30);
     pinSpriteRef.current = c;
   }, []);
 
@@ -589,8 +603,20 @@ const CountryPanel: React.FC<Props> = ({
 
       {/* Selected datacenter full card.
           Desktop: floats top-right.
-          Mobile: full-width bottom sheet that slides up from below. */}
+          Mobile: full-screen sheet — covers the entire viewport so it doesn't
+          overlap with the sidebar list awkwardly. Tap backdrop to dismiss. */}
       <AnimatePresence>
+        {selectedDc && isMobile && (
+          <motion.div
+            key="mobile-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            onClick={() => setSelectedDc(null)}
+            className="fixed inset-0 z-40 bg-black/55 pointer-events-auto"
+          />
+        )}
         {selectedDc && (
           <motion.div
             key={selectedDc.name + selectedDc.address}
@@ -598,33 +624,46 @@ const CountryPanel: React.FC<Props> = ({
             animate={isMobile ? { y: 0 } : { opacity: 1, y: 0, scale: 1 }}
             exit={isMobile ? { y: '100%' } : { opacity: 0, y: 12, scale: 0.95 }}
             transition={{ duration: isMobile ? 0.28 : 0.2, ease: [0.32, 0.72, 0, 1] }}
-            className={`bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden pointer-events-auto z-50 ${
+            className={`bg-[#0c0c0e]/98 backdrop-blur-xl border border-white/15 shadow-2xl pointer-events-auto z-50 ${
               isMobile
-                ? 'fixed left-0 right-0 bottom-0 rounded-t-2xl border-b-0 max-h-[80vh] overflow-y-auto'
-                : 'absolute top-24 right-8 w-[340px] rounded-lg'
+                ? 'fixed left-0 right-0 bottom-0 rounded-t-2xl border-b-0 max-h-[88vh] flex flex-col'
+                : 'absolute top-24 right-8 w-[340px] rounded-lg overflow-hidden'
             }`}
-            style={isMobile ? { paddingBottom: 'env(safe-area-inset-bottom)' } : undefined}
+            style={
+              isMobile
+                ? {
+                    paddingBottom: 'env(safe-area-inset-bottom)',
+                    WebkitOverflowScrolling: 'touch',
+                  }
+                : undefined
+            }
           >
             {isMobile && (
-              <div className="flex justify-center pt-2 pb-1">
-                <div className="w-10 h-1 rounded-full bg-white/20" />
+              <div className="flex justify-center pt-2 pb-1 flex-shrink-0">
+                <div className="w-12 h-1.5 rounded-full bg-white/25" />
               </div>
             )}
-            <div className="p-4 border-b border-white/10 flex justify-between items-start bg-white/5">
+            <div className={`border-b border-white/10 flex justify-between items-start bg-white/5 ${isMobile ? 'p-4 flex-shrink-0' : 'p-4'}`}>
               <div className="flex-1 min-w-0">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-seismic-orange mb-1">
                   Datacenter
                 </div>
-                <h3 className="font-sans font-bold text-lg leading-tight">{selectedDc.name}</h3>
+                <h3 className="font-sans font-bold text-lg leading-tight break-words">{selectedDc.name}</h3>
               </div>
               <button
                 onClick={() => setSelectedDc(null)}
-                className="text-gray-400 hover:text-white transition-colors ml-2 flex-shrink-0"
+                aria-label="Close"
+                className={`text-white/70 hover:text-white transition-colors ml-3 flex-shrink-0 rounded-full bg-white/10 hover:bg-white/15 flex items-center justify-center ${
+                  isMobile ? 'w-10 h-10' : 'w-7 h-7'
+                }`}
               >
-                <X size={18} />
+                <X size={isMobile ? 20 : 16} />
               </button>
             </div>
-            <div className="p-4 space-y-3 font-mono text-xs">
+            <div
+              className={`p-4 space-y-3 font-mono text-xs ${isMobile ? 'overflow-y-auto flex-1 -webkit-overflow-scrolling-touch' : ''}`}
+              style={isMobile ? { WebkitOverflowScrolling: 'touch' as any } : undefined}
+            >
               <div className="flex items-start gap-2">
                 <Building2 size={14} className="text-seismic-orange mt-0.5 flex-shrink-0" />
                 <div>
@@ -677,14 +716,44 @@ const CountryPanel: React.FC<Props> = ({
               )}
               <div className="flex items-start gap-2">
                 <MapPin size={14} className="text-seismic-orange mt-0.5 flex-shrink-0" />
-                <div className="text-white/80 leading-relaxed">
-                  {selectedDc.street && <div>{selectedDc.street}</div>}
-                  <div>
+                <div className="text-white/80 leading-relaxed flex-1 min-w-0">
+                  {selectedDc.street && <div className="break-words">{selectedDc.street}</div>}
+                  <div className="break-words">
                     {[selectedDc.city, selectedDc.state, selectedDc.zip].filter(Boolean).join(', ')}
                   </div>
                   <div className="text-white/50">{selectedDc.country}</div>
+                  {selectedDc.city_coords && (
+                    <div className="text-white/40 text-[10px] mt-1 tabular-nums">
+                      {selectedDc.city_coords[0].toFixed(4)}°, {selectedDc.city_coords[1].toFixed(4)}°
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* Map + Street View thumbnails — open in new tab, no API key */}
+              {selectedDc.city_coords && (
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <a
+                    href={`https://www.google.com/maps?q=${selectedDc.city_coords[0]},${selectedDc.city_coords[1]}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-center gap-1.5 text-[10px] text-white/75 hover:text-seismic-orange bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 rounded px-2 py-2 transition-colors uppercase tracking-widest"
+                  >
+                    <MapPin size={11} />
+                    Google Maps
+                  </a>
+                  <a
+                    href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${selectedDc.city_coords[0]},${selectedDc.city_coords[1]}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center justify-center gap-1.5 text-[10px] text-white/75 hover:text-seismic-orange bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 rounded px-2 py-2 transition-colors uppercase tracking-widest"
+                  >
+                    <Eye size={11} />
+                    Street View
+                  </a>
+                </div>
+              )}
+
               {selectedDc.source_url && (
                 <a
                   href={selectedDc.source_url}

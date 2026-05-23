@@ -37,19 +37,23 @@ const FilterHUD: React.FC<Props> = ({
 
   return (
     <div
-      className={`absolute z-20 pointer-events-auto ${
-        isMobile ? 'top-3 right-3 pt-safe' : 'top-6 right-6'
-      }`}
-      style={isMobile ? { marginTop: 'env(safe-area-inset-top)' } : undefined}
+      className={`absolute z-20 pointer-events-auto ${isMobile ? 'right-3' : 'top-6 right-6'}`}
+      style={
+        isMobile
+          ? { top: 'calc(env(safe-area-inset-top) + 112px)' }
+          : undefined
+      }
     >
       {/* Compact chip — tap to expand */}
       <motion.button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 bg-[#0c0c0e]/85 backdrop-blur-md border border-white/15 rounded-full px-3 py-1.5 text-xs font-mono uppercase tracking-widest text-white/85"
+        className={`flex items-center gap-2 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded-full font-mono uppercase tracking-widest text-white/85 ${
+          isMobile ? 'px-4 py-2.5 text-[12px]' : 'px-3 py-1.5 text-xs'
+        }`}
         whileTap={{ scale: 0.96 }}
         style={{ fontFamily: 'JetBrains Mono, monospace' }}
       >
-        <Layers size={13} className="text-[#ff9f43]" />
+        <Layers size={isMobile ? 15 : 13} className="text-[#ff9f43]" />
         <span>Layers</span>
         {activeCount > 0 && (
           <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#ff9f43] text-black text-[9px] font-bold">

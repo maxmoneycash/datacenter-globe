@@ -73,22 +73,26 @@ const NearestPanel: React.FC<Props> = ({
     <>
       {/* Trigger chip */}
       <div
-        className={`absolute z-20 pointer-events-auto ${
-          isMobile ? 'top-3 left-3 pt-safe' : 'top-6 left-6'
-        }`}
-        style={isMobile ? { marginTop: 'env(safe-area-inset-top)' } : undefined}
+        className={`absolute z-20 pointer-events-auto ${isMobile ? 'left-3' : 'top-6 left-6'}`}
+        style={
+          isMobile
+            ? { top: 'calc(env(safe-area-inset-top) + 112px)' }
+            : undefined
+        }
       >
         <motion.button
           onClick={() => (coords ? setOpen((v) => !v) : requestLocation())}
-          className="flex items-center gap-2 bg-[#0c0c0e]/85 backdrop-blur-md border border-white/15 rounded-full px-3 py-1.5 text-xs font-mono uppercase tracking-widest text-white/85"
+          className={`flex items-center gap-2 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded-full font-mono uppercase tracking-widest text-white/85 ${
+            isMobile ? 'px-4 py-2.5 text-[12px]' : 'px-3 py-1.5 text-xs'
+          }`}
           whileTap={{ scale: 0.96 }}
           style={{ fontFamily: 'JetBrains Mono, monospace' }}
           disabled={loading}
         >
           {loading ? (
-            <Loader2 size={13} className="text-[#ff9f43] animate-spin" />
+            <Loader2 size={isMobile ? 15 : 13} className="text-[#ff9f43] animate-spin" />
           ) : (
-            <Navigation size={13} className="text-[#ff9f43]" />
+            <Navigation size={isMobile ? 15 : 13} className="text-[#ff9f43]" />
           )}
           <span>{isMobile ? 'Near me' : 'Closest to me'}</span>
         </motion.button>

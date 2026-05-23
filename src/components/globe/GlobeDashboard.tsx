@@ -194,34 +194,41 @@ const GlobeDashboard: React.FC = () => {
         }}
       />
 
-      {/* HUD header — condensed on mobile so it doesn't overlap the globe */}
+      {/* HUD header — compact single-line on mobile, sits above safe-area */}
       <div
         className={`absolute top-0 left-0 w-full pointer-events-none flex justify-between items-start z-10 ${
-          isMobile ? 'p-3 pt-safe' : 'p-6'
+          isMobile ? 'px-3' : 'p-6'
         }`}
+        style={isMobile ? { paddingTop: 'calc(env(safe-area-inset-top) + 8px)' } : undefined}
       >
-        <div>
+        <div className={isMobile ? 'flex items-center gap-2' : ''}>
           <h1
-            className={`${isMobile ? 'text-lg' : 'text-4xl'} font-thin tracking-tighter text-white drop-shadow-lg`}
+            className={`${isMobile ? 'text-[15px]' : 'text-4xl'} font-thin tracking-tighter text-white drop-shadow-lg`}
             style={{ fontFamily: 'Space Grotesk, sans-serif' }}
           >
-            GLOBAL <span className="font-bold" style={{ color: '#ff9f43' }}>DATACENTERS</span>
+            <span className="font-bold" style={{ color: '#ff9f43' }}>DATACENTERS</span>
           </h1>
-          <div
-            className={`flex items-center gap-1.5 mt-1 ${
-              isMobile ? 'text-[9px] px-2 py-0.5' : 'text-sm mt-2 px-3 py-1'
-            } text-gray-400 bg-[#0c0c0e]/60 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto`}
-            style={{ fontFamily: 'JetBrains Mono, monospace' }}
-          >
-            <Activity size={isMobile ? 10 : 14} className="animate-pulse" style={{ color: '#ff4d4d' }} />
-            <span>
-              {loading
-                ? 'INITIALIZING DATA…'
-                : isMobile
-                ? `${totalSites.toLocaleString()} SITES · ${totalCountries} COUNTRIES`
-                : 'LATEST AVAILABLE DATA: GLOBAL DATA CENTER REGISTRY'}
+          {!isMobile && (
+            <div
+              className="flex items-center gap-1.5 mt-2 text-sm px-3 py-1 text-gray-400 bg-[#0c0c0e]/60 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto"
+              style={{ fontFamily: 'JetBrains Mono, monospace' }}
+            >
+              <Activity size={14} className="animate-pulse" style={{ color: '#ff4d4d' }} />
+              <span>
+                {loading
+                  ? 'INITIALIZING DATA…'
+                  : 'LATEST AVAILABLE DATA: GLOBAL DATA CENTER REGISTRY'}
+              </span>
+            </div>
+          )}
+          {isMobile && !loading && (
+            <span
+              className="text-[10px] text-white/55 tabular-nums"
+              style={{ fontFamily: 'JetBrains Mono, monospace' }}
+            >
+              {totalSites.toLocaleString()} · {totalCountries}
             </span>
-          </div>
+          )}
         </div>
 
         {!isMobile && (
@@ -284,13 +291,16 @@ const GlobeDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile-only hint: how to interact */}
+      {/* Mobile-only hint — anchored to bottom safe area */}
       {isMobile && !loading && !selectedCountry && (
         <div
-          className="absolute z-10 left-1/2 -translate-x-1/2 bottom-safe mb-3 pointer-events-none uppercase tracking-widest text-[9px] text-white/45"
-          style={{ fontFamily: 'JetBrains Mono, monospace' }}
+          className="absolute z-10 left-1/2 -translate-x-1/2 pointer-events-none uppercase tracking-widest text-[10px] text-white/45 text-center px-4"
+          style={{
+            fontFamily: 'JetBrains Mono, monospace',
+            bottom: 'calc(env(safe-area-inset-bottom) + 12px)',
+          }}
         >
-          Drag to rotate · pinch to zoom · tap a country
+          Drag · pinch · tap
         </div>
       )}
 

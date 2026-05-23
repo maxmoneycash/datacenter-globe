@@ -119,17 +119,21 @@ const SearchBox: React.FC<Props> = ({
   return (
     <div
       className={`absolute z-20 pointer-events-auto ${
-        isMobile ? 'top-3 left-3 right-[88px] pt-safe' : 'top-6 left-1/2 -translate-x-1/2'
+        isMobile ? 'left-3 right-3' : 'top-6 left-1/2 -translate-x-1/2'
       }`}
       style={{
-        ...(isMobile ? { marginTop: 'env(safe-area-inset-top)' } : { width: 380 }),
+        ...(isMobile
+          ? { top: 'calc(env(safe-area-inset-top) + 56px)' }
+          : { width: 380 }),
       }}
     >
       <div
-        className="flex items-center gap-2 bg-[#0c0c0e]/85 backdrop-blur-md border border-white/15 rounded-full px-3 py-1.5"
+        className={`flex items-center gap-2 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded-full ${
+          isMobile ? 'px-4 py-2.5' : 'px-3 py-1.5'
+        }`}
         style={{ fontFamily: 'JetBrains Mono, monospace' }}
       >
-        <Search size={14} className="text-white/55 flex-shrink-0" />
+        <Search size={isMobile ? 16 : 14} className="text-white/55 flex-shrink-0" />
         <input
           ref={inputRef}
           value={query}
@@ -138,8 +142,10 @@ const SearchBox: React.FC<Props> = ({
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
-          placeholder={isMobile ? 'Search…' : 'Search country, operator, or site… (⌘K)'}
-          className="flex-1 bg-transparent outline-none text-[12px] text-white placeholder:text-white/35"
+          placeholder={isMobile ? 'Search country, operator, or site…' : 'Search country, operator, or site… (⌘K)'}
+          className={`flex-1 bg-transparent outline-none text-white placeholder:text-white/35 ${
+            isMobile ? 'text-[14px]' : 'text-[12px]'
+          }`}
         />
         {query && (
           <button
