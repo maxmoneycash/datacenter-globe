@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Layers, Cable, Cloud, Building2, X } from 'lucide-react';
+import { Layers, Cable, Cloud, Building2, X, Zap } from 'lucide-react';
 import { CLOUD_COLORS, type CloudProvider } from './cloudRegions';
 import { HYPERSCALER_COLORS, HYPERSCALER_LIST, type Hyperscaler } from './hyperscalers';
 
@@ -10,6 +10,8 @@ interface Props {
   isMobile: boolean;
   showCables: boolean;
   onToggleCables: () => void;
+  showPlants: boolean;
+  onTogglePlants: () => void;
   shownClouds: Set<CloudProvider>;
   onToggleCloud: (c: CloudProvider) => void;
   hyperscalerFilter: Exclude<Hyperscaler, null> | null;
@@ -24,6 +26,8 @@ const FilterHUD: React.FC<Props> = ({
   isMobile,
   showCables,
   onToggleCables,
+  showPlants,
+  onTogglePlants,
   shownClouds,
   onToggleCloud,
   hyperscalerFilter,
@@ -33,7 +37,7 @@ const FilterHUD: React.FC<Props> = ({
 }) => {
   const [open, setOpen] = useState(false);
   const activeCount =
-    (showCables ? 1 : 0) + shownClouds.size + (hyperscalerFilter ? 1 : 0);
+    (showCables ? 1 : 0) + (showPlants ? 1 : 0) + shownClouds.size + (hyperscalerFilter ? 1 : 0);
 
   return (
     <div
@@ -75,10 +79,10 @@ const FilterHUD: React.FC<Props> = ({
               fontFamily: 'JetBrains Mono, monospace',
             }}
           >
-            {/* Submarine cables */}
+            {/* Network & Energy infrastructure */}
             <div className="px-4 pt-3 pb-2 border-b border-white/5">
               <div className="text-[9px] uppercase tracking-widest text-white/40 mb-2">
-                Network Layer
+                Infrastructure
               </div>
               <Toggle
                 icon={<Cable size={13} />}
@@ -87,6 +91,14 @@ const FilterHUD: React.FC<Props> = ({
                 active={showCables}
                 color="#22d3ee"
                 onClick={onToggleCables}
+              />
+              <Toggle
+                icon={<Zap size={13} />}
+                label="Power plants"
+                count={34936}
+                active={showPlants}
+                color="#fbbf24"
+                onClick={onTogglePlants}
               />
             </div>
 

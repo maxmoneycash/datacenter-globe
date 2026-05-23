@@ -6,6 +6,7 @@ import { BUCKET_COLORS, bucketFor, normalizeCountry } from './constants';
 import { useIsTouch } from './useIsMobile';
 import { CLOUD_REGIONS, CLOUD_COLORS, type CloudProvider } from './cloudRegions';
 import { HYPERSCALER_COLORS, type Hyperscaler } from './hyperscalers';
+import { plantColor, type PowerPlant } from './powerplants';
 
 interface GlobeProps {
   datacenters: Datacenter[];
@@ -15,6 +16,7 @@ interface GlobeProps {
   onBackgroundClick: () => void;
   selectedCountryName?: string | null;
   cables?: any | null;
+  powerPlants?: PowerPlant[] | null;
   shownClouds?: Set<CloudProvider>;
   hyperscalerFilter?: Exclude<Hyperscaler, null> | null;
   /** Called once the underlying globe instance is ready so the parent can
@@ -77,6 +79,7 @@ const Globe: React.FC<GlobeProps> = ({
   onBackgroundClick,
   selectedCountryName,
   cables,
+  powerPlants,
   shownClouds,
   hyperscalerFilter,
   onGlobeReady,
@@ -449,6 +452,89 @@ const Globe: React.FC<GlobeProps> = ({
 
   const hyperscalerActiveColor = hyperscalerFilter ? HYPERSCALER_COLORS[hyperscalerFilter] : null;
 
+  // ─── Power plants: render as our own merged points mesh attached to the
+  // scene (same pattern as datacenters). Color by fuel. Sized by capacity.
+  useEffect(() => {
+    if (!globeRef.current) return;
+    const scene = globeRef.current.scene();
+    if (!scene) return;
+    if (!powerPlants || powerPlants.length === 0) return;
+
+    const positions = new Float32Array(powerPlants.length * 3);
+    const colors = new Float32Array(powerPlants.length * 3);
+    for (let i = 0; i < powerPlants.length; i++) {
+      const p = powerPlants[i];
+      const phi = ((90 - p.lat) * Math.PI) / 180;
+      const theta = ((90 - p.lng) * Math.PI) / 180;
+      const r = 100.7;
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.cos(phi);
+      positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      const hex = plantColor(p.f);
+      const c = new THREE.Color(hex);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const mat = new THREE.PointsMaterial({
+      size: 1.3,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+      depthTest: true,
+      depthWrite: false,
+    });
+
+    // Hemisphere-cull (same shader injection trick as datacenters)
+    mat.onBeforeCompile = (shader) => {
+      shader.vertexShader = `
+        varying float vVisible;
+        ${shader.vertexShader}
+      `.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+        vec3 outward = normalize(wp);
+        vec3 toCam = normalize(cameraPosition - vec3(0.0));
+        vVisible = dot(outward, toCam);
+        `
+      );
+      shader.fragmentShader = `
+        varying float vVisible;
+        ${shader.fragmentShader}
+      `.replace(
+        'void main() {',
+        `void main() {
+          if (vVisible < 0.0) discard;
+        `
+      );
+    };
+
+    const points = new THREE.Points(geom, mat);
+    points.frustumCulled = false;
+    points.layers.set(PIN_RAYCAST_LAYER);
+    const camera = globeRef.current.camera?.();
+    if (camera) camera.layers.enable(PIN_RAYCAST_LAYER);
+    scene.add(points);
+
+    return () => {
+      scene.remove(points);
+      geom.dispose();
+      mat.dispose();
+    };
+  }, [powerPlants]);
+
+  // Pass-through prop so we don't accidentally drop it (we render plants
+  // imperatively, not via react-globe.gl's customLayerData).
+  const powerPlantPoints = useMemo(() => [], []);
+
   return (
     <div className="relative w-full h-screen bg-[#0c0c0e] cursor-crosshair">
       {hoveredPin && (
@@ -505,15 +591,27 @@ const Globe: React.FC<GlobeProps> = ({
         showAtmosphere={true}
         atmosphereColor="#8b5cf6"
         atmosphereAltitude={0.15}
+        // Submarine cables — animated dash flows along each cable like data
+        // packets. Pulse cycle is 4.5s; cables stay color-coded by operator.
         pathsData={cablePaths}
         pathPoints="pts"
         pathPointLat={(p: any) => p[0]}
         pathPointLng={(p: any) => p[1]}
         pathColor={(d: any) => d.color}
-        pathStroke={0.4}
-        pathDashLength={0}
-        pathDashGap={0}
+        pathStroke={0.6}
+        pathDashLength={0.08}
+        pathDashGap={0.04}
+        pathDashAnimateTime={4500}
+        pathLabel={(d: any) =>
+          d.name
+            ? `<div style="background:#0c0c0e;color:#fff;padding:6px 10px;border:1px solid rgba(255,255,255,0.18);border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:11px;"><div style="color:#22d3ee;font-size:9px;letter-spacing:2px;text-transform:uppercase;margin-bottom:2px;">Submarine Cable</div>${d.name}</div>`
+            : ''
+        }
         pathTransitionDuration={0}
+        // Power plants — colored dots by primary fuel type
+        customLayerData={powerPlantPoints}
+        customThreeObject={(d: any) => d.obj}
+        customThreeObjectUpdate={(_obj: any, _d: any) => {}}
         labelsData={cloudPoints}
         labelLat="lat"
         labelLng="lng"

@@ -12,9 +12,11 @@ import CountryPanel from './CountryPanel';
 import FilterHUD from './FilterHUD';
 import SearchBox from './SearchBox';
 import NearestPanel from './NearestPanel';
+import HyperscalerStats from './HyperscalerStats';
 import { useIsMobile } from './useIsMobile';
-import { classifyHyperscaler, type Hyperscaler } from './hyperscalers';
+import { classifyHyperscaler, HYPERSCALER_COLORS, type Hyperscaler } from './hyperscalers';
 import type { CloudProvider } from './cloudRegions';
+import type { PowerPlant } from './powerplants';
 import type { Datacenter, CountryStat } from './types';
 
 const TourApp = dynamic(() => import('@/src/tour/TourApp'), {
@@ -43,6 +45,8 @@ const GlobeDashboard: React.FC = () => {
   const [shownClouds, setShownClouds] = useState<Set<CloudProvider>>(new Set());
   const [hyperscalerFilter, setHyperscalerFilter] = useState<Exclude<Hyperscaler, null> | null>(null);
   const [cables, setCables] = useState<any>(null);
+  const [showPlants, setShowPlants] = useState(false);
+  const [powerPlants, setPowerPlants] = useState<PowerPlant[] | null>(null);
   // When something in search / nearest panel sets a "pending" datacenter,
   // the CountryPanel auto-selects it after the country view opens.
   const [pendingSelectDc, setPendingSelectDc] = useState<Datacenter | null>(null);
@@ -148,6 +152,15 @@ const GlobeDashboard: React.FC = () => {
       .catch((err) => console.error('Failed to load cables', err));
   }, [showCables, cables]);
 
+  // Lazy-load 3.3MB power plant database only when the user first turns it on.
+  useEffect(() => {
+    if (!showPlants || powerPlants) return;
+    fetch('/powerplants.json')
+      .then((r) => r.json())
+      .then(setPowerPlants)
+      .catch((err) => console.error('Failed to load power plants', err));
+  }, [showPlants, powerPlants]);
+
   // Apply hyperscaler filter — produces the dataset shown on the globe + map.
   const visibleDatacenters = useMemo(() => {
     if (!hyperscalerFilter) return datacenters;
@@ -187,6 +200,7 @@ const GlobeDashboard: React.FC = () => {
         onBackgroundClick={() => {}}
         selectedCountryName={selectedCountry}
         cables={showCables ? cables : null}
+        powerPlants={showPlants ? powerPlants : null}
         shownClouds={shownClouds}
         hyperscalerFilter={hyperscalerFilter}
         onGlobeReady={(g) => {
@@ -266,6 +280,8 @@ const GlobeDashboard: React.FC = () => {
           isMobile={isMobile}
           showCables={showCables}
           onToggleCables={() => setShowCables((v) => !v)}
+          showPlants={showPlants}
+          onTogglePlants={() => setShowPlants((v) => !v)}
           shownClouds={shownClouds}
           onToggleCloud={(c) =>
             setShownClouds((prev) => {
@@ -279,6 +295,15 @@ const GlobeDashboard: React.FC = () => {
           onSetHyperscaler={setHyperscalerFilter}
           visibleCount={visibleDatacenters.length}
           totalCount={datacenters.length}
+        />
+      )}
+
+      {/* Hyperscaler stats card — appears when a hyperscaler filter is active */}
+      {!loading && !selectedCountry && hyperscalerFilter && (
+        <HyperscalerStats
+          hyperscaler={hyperscalerFilter}
+          datacenters={visibleDatacenters}
+          isMobile={isMobile}
         />
       )}
 
