@@ -1,10 +1,11 @@
 import React, { useMemo, useState, useCallback, memo, useEffect, useRef } from 'react';
 import { X, MapPin, Building2, Box, Zap, ExternalLink, Eye } from 'lucide-react';
-import { geoMercator, geoPath, geoArea } from 'd3-geo';
+import { geoArea } from 'd3-geo';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Datacenter, CountryStat } from './types';
 import { normalizeCountry } from './constants';
 import { useIsMobile } from './useIsMobile';
+import CountryMap from './CountryMap';
 
 interface Props {
   countryName: string;
@@ -224,165 +225,10 @@ const CountryPanel: React.FC<Props> = ({
   const mapWidth = isMobile ? width : Math.max(400, width - LEFT_PANEL_WIDTH);
   const mapHeight = isMobile ? Math.round(height * 0.55) : height;
 
-  const { fullPathD, mainlandPathD, pins } = useMemo(() => {
-    if (!feature || !projectionFeature) {
-      return { fullPathD: '', mainlandPathD: '', pins: [] as { x: number; y: number; dc: Datacenter }[] };
-    }
-    const padX = isMobile ? 24 : 60;
-    const padTop = isMobile ? 84 : 80;
-    const padBottom = isMobile ? 12 : 60;
-    const proj = geoMercator().fitExtent(
-      [
-        [mapLeft + padX, padTop],
-        [mapLeft + mapWidth - padX, mapHeight - padBottom],
-      ],
-      projectionFeature
-    );
-    const path = geoPath(proj);
-    const ps = inCountry
-      .map((dc) => {
-        const [lat, lng] = dc.city_coords!;
-        const p = proj([lng, lat]);
-        if (!p) return null;
-        return { x: p[0], y: p[1], dc };
-      })
-      .filter((p): p is { x: number; y: number; dc: Datacenter } => p !== null);
-    return {
-      fullPathD: path(feature) || '',
-      mainlandPathD: path(projectionFeature) || '',
-      pins: ps,
-    };
-  }, [feature, projectionFeature, inCountry, mapLeft, mapWidth, mapHeight, isMobile]);
-
-  // Outlying-territory pins (those outside the mainland fit) — render at edge as "off-map" markers
-  const visiblePins = useMemo(
-    () =>
-      pins.filter(
-        (p) =>
-          p.x >= mapLeft - 10 &&
-          p.x <= mapLeft + mapWidth + 10 &&
-          p.y >= -10 &&
-          p.y <= mapHeight + 10
-      ),
-    [pins, mapLeft, mapWidth, mapHeight]
-  );
-  const offMapCount = pins.length - visiblePins.length;
-
-  // ─── Two-canvas pin layer:
-  //   • BASE canvas: every pin drawn once. Only redraws when the dataset/layout
-  //     changes (entering a new country, resizing). Never on hover.
-  //   • OVERLAY canvas: only the active pin (hovered or selected) with glow.
-  //     Redraws on every hover change but writes ~1 pin to a tiny region —
-  //     essentially free.
-  // This decouples hover responsiveness from pin count.
-  useEffect(() => {
-    const canvas = baseCanvasRef.current;
-    const sprite = pinSpriteRef.current;
-    if (!canvas || !sprite) return;
-    const dpr = window.devicePixelRatio || 1;
-    const cw = width;
-    const ch = isMobile ? mapHeight : height;
-    canvas.width = cw * dpr;
-    canvas.height = ch * dpr;
-    canvas.style.width = `${cw}px`;
-    canvas.style.height = `${ch}px`;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cw, ch);
-    for (const p of visiblePins) {
-      ctx.drawImage(sprite, p.x - PIN_SIZE / 2, p.y - PIN_SIZE / 2, PIN_SIZE, PIN_SIZE);
-    }
-  }, [visiblePins, width, height, mapHeight, isMobile]);
-
-  // Overlay redraws ONLY on hover/select change — 1 drawImage, not 2,800.
-  useEffect(() => {
-    const canvas = overlayCanvasRef.current;
-    const sprite = pinSpriteRef.current;
-    if (!canvas || !sprite) return;
-    const dpr = window.devicePixelRatio || 1;
-    const cw = width;
-    const ch = isMobile ? mapHeight : height;
-    if (canvas.width !== cw * dpr || canvas.height !== ch * dpr) {
-      canvas.width = cw * dpr;
-      canvas.height = ch * dpr;
-      canvas.style.width = `${cw}px`;
-      canvas.style.height = `${ch}px`;
-    }
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cw, ch);
-    const active = visiblePins.find((p) => p.dc === selectedDc || p.dc === hoverDc);
-    if (active) {
-      const sz = PIN_SIZE_HOVER;
-      ctx.save();
-      ctx.shadowColor = 'rgba(255, 159, 67, 0.95)';
-      ctx.shadowBlur = 10;
-      ctx.drawImage(sprite, active.x - sz / 2, active.y - sz / 2, sz, sz);
-      ctx.restore();
-    }
-  }, [visiblePins, selectedDc, hoverDc, width, height, mapHeight, isMobile]);
-
-  // ─── Canvas hit testing: RAF-throttled nearest-pin lookup.
-  const lastMoveRef = useRef<{ x: number; y: number } | null>(null);
-  const rafRef = useRef<number>(0);
-
-  const runHitTest = useCallback(() => {
-    rafRef.current = 0;
-    const m = lastMoveRef.current;
-    if (!m) return;
-    let nearest: { dc: Datacenter; x: number; y: number } | null = null;
-    let bestDist = PIN_HIT_RADIUS;
-    for (const p of visiblePins) {
-      const dx = p.x - m.x;
-      const dy = p.y - m.y;
-      const d = Math.hypot(dx, dy);
-      if (d < bestDist) {
-        bestDist = d;
-        nearest = p;
-      }
-    }
-    if (nearest) {
-      setHoverDc((prev) => (prev === nearest!.dc ? prev : nearest!.dc));
-      setHoverPos({ x: nearest.x, y: nearest.y });
-    } else {
-      setHoverDc((prev) => (prev === null ? prev : null));
-    }
-  }, [visiblePins]);
-
-  const handleCanvasMove = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      lastMoveRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      if (!rafRef.current) rafRef.current = requestAnimationFrame(runHitTest);
-    },
-    [runHitTest]
-  );
-
-  const handleCanvasLeave = useCallback(() => {
-    lastMoveRef.current = null;
-    setHoverDc((prev) => (prev === null ? prev : null));
-  }, []);
-
-  const handleCanvasClick = useCallback(
-    (e: React.MouseEvent<HTMLCanvasElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      let nearest: { dc: Datacenter } | null = null;
-      let bestDist = PIN_HIT_RADIUS;
-      for (const p of visiblePins) {
-        const d = Math.hypot(p.x - x, p.y - y);
-        if (d < bestDist) {
-          bestDist = d;
-          nearest = p;
-        }
-      }
-      if (nearest) setSelectedDc(nearest.dc);
-    },
-    [visiblePins]
-  );
+  // MapLibre handles all pin rendering + hit testing + outline drawing now.
+  // Keep a placeholder for off-map count; with MapLibre, all pins are visible
+  // at the appropriate zoom level so this is always 0.
+  const offMapCount = 0;
 
   // ─── Sidebar virtualization: track container height + scroll
   useEffect(() => {
@@ -408,51 +254,28 @@ const CountryPanel: React.FC<Props> = ({
       transition={{ duration: 0.18 }}
       className="absolute inset-0 z-20 bg-[#0c0c0e]/95 backdrop-blur-xl"
     >
-      {/* Pin layers: base = all pins (static), overlay = active pin only. */}
-      <canvas
-        ref={baseCanvasRef}
-        className="absolute top-0 left-0 pointer-events-none"
-        style={{ zIndex: 1 }}
-      />
-      <canvas
-        ref={overlayCanvasRef}
-        onMouseMove={handleCanvasMove}
-        onMouseLeave={handleCanvasLeave}
-        onClick={handleCanvasClick}
+      {/* Interactive MapLibre map — pinch/drag/zoom, clustered pins, animated. */}
+      <div
         className="absolute top-0 left-0"
-        style={{ cursor: hoverDc ? 'pointer' : 'default', zIndex: 2 }}
-      />
-
-      <motion.svg
-        width={isMobile ? width : width}
-        height={isMobile ? mapHeight : height}
-        className="absolute top-0 left-0 pointer-events-none"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.15 }}
+        style={{
+          width: isMobile ? width : width - LEFT_PANEL_WIDTH,
+          height: isMobile ? mapHeight : height,
+          left: isMobile ? 0 : LEFT_PANEL_WIDTH,
+        }}
       >
-        {/* Mainland outline — instant, no path-stroke animation */}
-        <path
-          d={mainlandPathD}
-          fill="rgba(255, 159, 67, 0.05)"
-          stroke="#ff9f43"
-          strokeWidth={1.2}
-          strokeOpacity={0.85}
+        <CountryMap
+          countryFeature={feature}
+          datacenters={inCountry}
+          width={isMobile ? width : width - LEFT_PANEL_WIDTH}
+          height={isMobile ? mapHeight : height}
+          selectedDc={selectedDc}
+          hoverDc={hoverDc}
+          onHover={setHoverDc}
+          onSelect={setSelectedDc}
         />
+      </div>
 
-        {/* Faint full outline (Alaska/Hawaii etc.) — visible but secondary */}
-        {fullPathD !== mainlandPathD && (
-          <path
-            d={fullPathD}
-            fill="none"
-            stroke="#ff9f43"
-            strokeWidth={0.6}
-            strokeOpacity={0.3}
-          />
-        )}
-
-        {/* Pins are drawn on the canvas above — no SVG pin nodes anymore. */}
-      </motion.svg>
+      {/* SVG outline + canvas pins removed — MapLibre handles everything. */}
 
       {/* Left stats panel — desktop: side column. Mobile: stacks under the map. */}
       <motion.aside

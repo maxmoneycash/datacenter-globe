@@ -51,6 +51,21 @@
   button, a { -webkit-tap-highlight-color: transparent; }
 }
 
+/* ── MapLibre theme overrides ──────────────────────────────────────────────── */
+.maplibregl-ctrl-attrib {
+  background: rgba(12, 12, 14, 0.55) !important;
+  color: rgba(255, 255, 255, 0.4) !important;
+  font-size: 9px !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+.maplibregl-ctrl-attrib a { color: rgba(255, 255, 255, 0.55) !important; }
+.maplibregl-ctrl-attrib-button {
+  background-color: rgba(12, 12, 14, 0.7) !important;
+}
+.maplibregl-canvas:focus { outline: none !important; }
+.maplibregl-ctrl-bottom-right { right: 4px !important; bottom: 4px !important; }
+.maplibregl-ctrl-logo { opacity: 0.4 !important; }
+
 @keyframes pulse-soft {
   0%, 100% { opacity: 0.55; }
   50%      { opacity: 1; }
