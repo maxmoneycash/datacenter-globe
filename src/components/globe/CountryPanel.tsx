@@ -113,7 +113,8 @@ const CountryPanel: React.FC<Props> = ({
   const [selectedDc, setSelectedDc] = useState<Datacenter | null>(initialSelectedDc ?? null);
   const [hoverDc, setHoverDc] = useState<Datacenter | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const baseCanvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const pinSpriteRef = useRef<HTMLCanvasElement | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [sidebarHeight, setSidebarHeight] = useState(600);
@@ -253,10 +254,15 @@ const CountryPanel: React.FC<Props> = ({
   );
   const offMapCount = pins.length - visiblePins.length;
 
-  // ─── Canvas pin layer: redraws whenever pins or active state changes.
-  // 2,800 drawImage calls ≈ 3ms; cheaper than 2,800 SVG <text> repaints.
+  // ─── Two-canvas pin layer:
+  //   • BASE canvas: every pin drawn once. Only redraws when the dataset/layout
+  //     changes (entering a new country, resizing). Never on hover.
+  //   • OVERLAY canvas: only the active pin (hovered or selected) with glow.
+  //     Redraws on every hover change but writes ~1 pin to a tiny region —
+  //     essentially free.
+  // This decouples hover responsiveness from pin count.
   useEffect(() => {
-    const canvas = canvasRef.current;
+    const canvas = baseCanvasRef.current;
     const sprite = pinSpriteRef.current;
     if (!canvas || !sprite) return;
     const dpr = window.devicePixelRatio || 1;
@@ -270,20 +276,36 @@ const CountryPanel: React.FC<Props> = ({
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
-    // Draw inactive pins first
     for (const p of visiblePins) {
-      if (p.dc === selectedDc || p.dc === hoverDc) continue;
       ctx.drawImage(sprite, p.x - PIN_SIZE / 2, p.y - PIN_SIZE / 2, PIN_SIZE, PIN_SIZE);
     }
-    // Draw active pins last (on top, larger, with glow)
-    for (const p of visiblePins) {
-      const isActive = p.dc === selectedDc || p.dc === hoverDc;
-      if (!isActive) continue;
+  }, [visiblePins, width, height, mapHeight, isMobile]);
+
+  // Overlay redraws ONLY on hover/select change — 1 drawImage, not 2,800.
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    const sprite = pinSpriteRef.current;
+    if (!canvas || !sprite) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cw = width;
+    const ch = isMobile ? mapHeight : height;
+    if (canvas.width !== cw * dpr || canvas.height !== ch * dpr) {
+      canvas.width = cw * dpr;
+      canvas.height = ch * dpr;
+      canvas.style.width = `${cw}px`;
+      canvas.style.height = `${ch}px`;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    const active = visiblePins.find((p) => p.dc === selectedDc || p.dc === hoverDc);
+    if (active) {
       const sz = PIN_SIZE_HOVER;
       ctx.save();
       ctx.shadowColor = 'rgba(255, 159, 67, 0.95)';
       ctx.shadowBlur = 10;
-      ctx.drawImage(sprite, p.x - sz / 2, p.y - sz / 2, sz, sz);
+      ctx.drawImage(sprite, active.x - sz / 2, active.y - sz / 2, sz, sz);
       ctx.restore();
     }
   }, [visiblePins, selectedDc, hoverDc, width, height, mapHeight, isMobile]);
@@ -369,38 +391,39 @@ const CountryPanel: React.FC<Props> = ({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.3 }}
+      transition={{ duration: 0.18 }}
       className="absolute inset-0 z-20 bg-[#0c0c0e]/95 backdrop-blur-xl"
     >
-      {/* Pin layer — canvas, NOT svg. Single element, 2,800+ pins is no
-          problem because each pin is just a drawImage call (~µs each). */}
+      {/* Pin layers: base = all pins (static), overlay = active pin only. */}
       <canvas
-        ref={canvasRef}
+        ref={baseCanvasRef}
+        className="absolute top-0 left-0 pointer-events-none"
+        style={{ zIndex: 1 }}
+      />
+      <canvas
+        ref={overlayCanvasRef}
         onMouseMove={handleCanvasMove}
         onMouseLeave={handleCanvasLeave}
         onClick={handleCanvasClick}
         className="absolute top-0 left-0"
-        style={{ cursor: hoverDc ? 'pointer' : 'default', zIndex: 1 }}
+        style={{ cursor: hoverDc ? 'pointer' : 'default', zIndex: 2 }}
       />
 
       <motion.svg
         width={isMobile ? width : width}
         height={isMobile ? mapHeight : height}
         className="absolute top-0 left-0 pointer-events-none"
-        initial={{ scale: 0.92, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.55, ease: [0.4, 0, 0.2, 1] }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.15 }}
       >
-        {/* Mainland outline (the part the projection is fit to) */}
-        <motion.path
+        {/* Mainland outline — instant, no path-stroke animation */}
+        <path
           d={mainlandPathD}
           fill="rgba(255, 159, 67, 0.05)"
           stroke="#ff9f43"
           strokeWidth={1.2}
           strokeOpacity={0.85}
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={{ pathLength: 1, opacity: 1 }}
-          transition={{ duration: 0.9, ease: 'easeOut' }}
         />
 
         {/* Faint full outline (Alaska/Hawaii etc.) — visible but secondary */}
@@ -419,9 +442,9 @@ const CountryPanel: React.FC<Props> = ({
 
       {/* Left stats panel — desktop: side column. Mobile: stacks under the map. */}
       <motion.aside
-        initial={isMobile ? { opacity: 0, y: 30 } : { opacity: 0, x: -20 }}
+        initial={isMobile ? { opacity: 0, y: 20 } : { opacity: 0, x: -10 }}
         animate={isMobile ? { opacity: 1, y: 0 } : { opacity: 1, x: 0 }}
-        transition={{ delay: 0.15, duration: 0.4 }}
+        transition={{ duration: 0.18 }}
         className={`absolute pointer-events-auto flex flex-col bg-[#0c0c0e]/85 backdrop-blur-md ${
           isMobile
             ? 'left-0 right-0 border-t border-white/10'
@@ -503,7 +526,7 @@ const CountryPanel: React.FC<Props> = ({
         onClick={onClose}
         initial={{ opacity: 0, x: -8 }}
         animate={{ opacity: 1, x: 0 }}
-        transition={{ delay: 0.3 }}
+        transition={{ duration: 0.15 }}
         className={`absolute z-30 font-mono uppercase tracking-widest text-white/70 hover:text-seismic-orange transition-colors pointer-events-auto bg-[#0c0c0e]/80 backdrop-blur-md border border-white/10 rounded-full ${
           isMobile
             ? 'top-3 left-3 text-[11px] px-3 py-2'
