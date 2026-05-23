@@ -78,10 +78,43 @@ const CountryMap: React.FC<Props> = ({
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // CartoDB raster dark tiles — CORS-friendly (their vector style.json is NOT,
+    // which is why the previous URL-based approach silently failed). Raster is
+    // marginally less crisp than vector but works everywhere with zero config.
+    const rasterStyle = {
+      version: 8 as const,
+      sources: {
+        'carto-dark': {
+          type: 'raster' as const,
+          tiles: [
+            'https://a.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+            'https://b.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+            'https://c.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+            'https://d.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png',
+          ],
+          tileSize: 256,
+          attribution: '© CARTO · © OpenStreetMap contributors',
+        },
+        'carto-labels': {
+          type: 'raster' as const,
+          tiles: [
+            'https://a.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png',
+            'https://b.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png',
+            'https://c.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png',
+            'https://d.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png',
+          ],
+          tileSize: 256,
+        },
+      },
+      layers: [
+        { id: 'carto-dark', type: 'raster' as const, source: 'carto-dark' },
+        { id: 'carto-labels', type: 'raster' as const, source: 'carto-labels', minzoom: 4 },
+      ],
+    };
+
     const map = new maplibregl.Map({
       container: containerRef.current,
-      // CartoDB dark-matter style, free + open. Looks great on our theme.
-      style: 'https://basemaps.cartocdn.com/gl/dark-matter-no-labels-gl-style/style.json',
+      style: rasterStyle,
       bounds: countryFeature ? (geoBounds(countryFeature) as any) : undefined,
       fitBoundsOptions: { padding: 40, duration: 0 },
       attributionControl: { compact: true },

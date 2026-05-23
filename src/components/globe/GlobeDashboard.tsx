@@ -203,21 +203,22 @@ const GlobeDashboard: React.FC = () => {
       >
         <div className={isMobile ? 'flex items-center gap-2' : ''}>
           <h1
-            className={`${isMobile ? 'text-[15px]' : 'text-4xl'} font-thin tracking-tighter text-white drop-shadow-lg`}
+            className={`${isMobile ? 'text-[15px]' : 'text-3xl'} font-thin tracking-tighter text-white drop-shadow-lg`}
             style={{ fontFamily: 'Space Grotesk, sans-serif' }}
           >
+            {!isMobile && 'GLOBAL '}
             <span className="font-bold" style={{ color: '#ff9f43' }}>DATACENTERS</span>
           </h1>
           {!isMobile && (
             <div
-              className="flex items-center gap-1.5 mt-2 text-sm px-3 py-1 text-gray-400 bg-[#0c0c0e]/60 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto"
+              className="flex items-center gap-1.5 mt-2 text-xs px-3 py-1 text-gray-400 bg-[#0c0c0e]/60 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto"
               style={{ fontFamily: 'JetBrains Mono, monospace' }}
             >
-              <Activity size={14} className="animate-pulse" style={{ color: '#ff4d4d' }} />
+              <Activity size={12} className="animate-pulse" style={{ color: '#ff4d4d' }} />
               <span>
                 {loading
                   ? 'INITIALIZING DATA…'
-                  : 'LATEST AVAILABLE DATA: GLOBAL DATA CENTER REGISTRY'}
+                  : `${totalSites.toLocaleString()} SITES · ${totalCountries} COUNTRIES`}
               </span>
             </div>
           )}
