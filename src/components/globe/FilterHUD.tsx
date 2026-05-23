@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Layers, Cable, Cloud, Building2, X, Zap } from 'lucide-react';
 import { CLOUD_COLORS, type CloudProvider } from './cloudRegions';
@@ -36,6 +36,12 @@ const FilterHUD: React.FC<Props> = ({
   totalCount,
 }) => {
   const [open, setOpen] = useState(false);
+  // Pulse for ~6s after mount to draw the eye, then settle.
+  const [pulse, setPulse] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setPulse(false), 6000);
+    return () => clearTimeout(t);
+  }, []);
   const activeCount =
     (showCables ? 1 : 0) + (showPlants ? 1 : 0) + shownClouds.size + (hyperscalerFilter ? 1 : 0);
 
@@ -48,19 +54,35 @@ const FilterHUD: React.FC<Props> = ({
           : undefined
       }
     >
-      {/* Compact chip — tap to expand */}
+      {/* Trigger — bigger by default + pulses for ~6s after first mount so the
+          eye actually finds it. Subtitle hints what's inside. */}
       <motion.button
-        onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-2 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded-full font-mono uppercase tracking-widest text-white/85 ${
-          isMobile ? 'px-4 py-2.5 text-[12px]' : 'px-3 py-1.5 text-xs'
+        onClick={() => {
+          setOpen((v) => !v);
+          setPulse(false);
+        }}
+        className={`flex items-center gap-2.5 bg-[#0c0c0e]/92 backdrop-blur-md rounded-full font-mono uppercase tracking-widest text-white relative ${
+          isMobile ? 'px-4 py-2.5 text-[12px]' : 'px-4 py-2 text-xs'
         }`}
         whileTap={{ scale: 0.96 }}
-        style={{ fontFamily: 'JetBrains Mono, monospace' }}
+        style={{
+          fontFamily: 'JetBrains Mono, monospace',
+          border: '1.5px solid #ff9f43',
+          boxShadow: pulse ? '0 0 0 0 rgba(255,159,67,0.6)' : '0 0 0 0 rgba(255,159,67,0)',
+          animation: pulse ? 'pulse-glow 1.8s ease-out infinite' : 'none',
+        }}
       >
-        <Layers size={isMobile ? 15 : 13} className="text-[#ff9f43]" />
-        <span>Layers</span>
+        <Layers size={isMobile ? 16 : 14} className="text-[#ff9f43]" />
+        <div className="flex flex-col items-start leading-tight">
+          <span className="font-semibold">Layers</span>
+          {!isMobile && (
+            <span className="text-[8.5px] text-white/45 tracking-[0.15em] font-normal normal-case">
+              cables · plants · clouds
+            </span>
+          )}
+        </div>
         {activeCount > 0 && (
-          <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#ff9f43] text-black text-[9px] font-bold">
+          <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#ff9f43] text-black text-[10px] font-bold">
             {activeCount}
           </span>
         )}

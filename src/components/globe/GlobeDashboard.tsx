@@ -343,6 +343,9 @@ const GlobeDashboard: React.FC = () => {
             height={viewport.h}
             initialSelectedDc={pendingSelectDc}
             onConsumedInitialDc={() => setPendingSelectDc(null)}
+            cables={showCables ? cables : null}
+            powerPlants={showPlants ? powerPlants : null}
+            shownClouds={shownClouds as unknown as Set<string>}
           />
         )}
       </AnimatePresence>

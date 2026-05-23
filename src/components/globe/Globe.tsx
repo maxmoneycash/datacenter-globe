@@ -482,11 +482,11 @@ const Globe: React.FC<GlobeProps> = ({
     geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
     const mat = new THREE.PointsMaterial({
-      size: 1.3,
+      size: 1.8,
       sizeAttenuation: true,
       vertexColors: true,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
       depthTest: true,
       depthWrite: false,
     });
@@ -616,10 +616,11 @@ const Globe: React.FC<GlobeProps> = ({
         labelLat="lat"
         labelLng="lng"
         labelText="label"
-        labelSize={0.5}
-        labelDotRadius={0.4}
+        labelSize={0.6}
+        labelDotRadius={0.55}
         labelColor={(d: any) => d.color}
         labelResolution={2}
+        labelAltitude={0.014}
       />
     </div>
   );

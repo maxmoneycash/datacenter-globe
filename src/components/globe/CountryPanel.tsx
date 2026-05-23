@@ -19,6 +19,11 @@ interface Props {
   // Optional pre-selected datacenter (e.g. from search box). Auto-opens its card on mount.
   initialSelectedDc?: Datacenter | null;
   onConsumedInitialDc?: () => void;
+  // Overlay layers — passed through from GlobeDashboard so the country map
+  // shows the same cables/plants/clouds the user enabled on the globe view.
+  cables?: any | null;
+  powerPlants?: any[] | null;
+  shownClouds?: Set<string>;
 }
 
 // Reserve a fixed left column for the stats panel; the map takes the rest.
@@ -110,6 +115,9 @@ const CountryPanel: React.FC<Props> = ({
   height,
   initialSelectedDc,
   onConsumedInitialDc,
+  cables,
+  powerPlants,
+  shownClouds,
 }) => {
   const [selectedDc, setSelectedDc] = useState<Datacenter | null>(initialSelectedDc ?? null);
   const [hoverDc, setHoverDc] = useState<Datacenter | null>(null);
@@ -272,6 +280,9 @@ const CountryPanel: React.FC<Props> = ({
           hoverDc={hoverDc}
           onHover={setHoverDc}
           onSelect={setSelectedDc}
+          cables={cables}
+          powerPlants={powerPlants}
+          shownClouds={shownClouds as Set<any> | undefined}
         />
       </div>
 

@@ -5,6 +5,8 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { geoBounds } from 'd3-geo';
 import type { Datacenter } from './types';
+import { CLOUD_REGIONS, CLOUD_COLORS, type CloudProvider } from './cloudRegions';
+import { FUEL_COLORS, type PowerPlant } from './powerplants';
 
 interface Props {
   countryFeature: any; // GeoJSON feature for the focused country
@@ -15,6 +17,10 @@ interface Props {
   hoverDc: Datacenter | null;
   onHover: (dc: Datacenter | null) => void;
   onSelect: (dc: Datacenter) => void;
+  // Overlay layers (visible across the globe AND inside the country view)
+  cables?: any | null;
+  powerPlants?: PowerPlant[] | null;
+  shownClouds?: Set<CloudProvider>;
 }
 
 const COLOR_PRIMARY = '#ff9f43';
@@ -36,6 +42,9 @@ const CountryMap: React.FC<Props> = ({
   hoverDc,
   onHover,
   onSelect,
+  cables,
+  powerPlants,
+  shownClouds,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -316,6 +325,119 @@ const CountryMap: React.FC<Props> = ({
           .catch(() => {});
       });
 
+      // Overlay sources (initially empty; populated via setData below)
+      map.addSource('cables-src', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer(
+        {
+          id: 'cables-glow',
+          type: 'line',
+          source: 'cables-src',
+          paint: {
+            'line-color': ['coalesce', ['get', 'color'], '#22d3ee'],
+            'line-width': 3,
+            'line-opacity': 0.25,
+            'line-blur': 4,
+          },
+        },
+        'country-outline-glow'
+      );
+      map.addLayer(
+        {
+          id: 'cables',
+          type: 'line',
+          source: 'cables-src',
+          paint: {
+            'line-color': ['coalesce', ['get', 'color'], '#22d3ee'],
+            'line-width': 1.1,
+            'line-opacity': 0.78,
+          },
+        },
+        'country-outline'
+      );
+
+      map.addSource('plants-src', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer(
+        {
+          id: 'plants-halo',
+          type: 'circle',
+          source: 'plants-src',
+          paint: {
+            'circle-color': ['get', 'color'],
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 6, 10, 12, 14, 20],
+            'circle-opacity': 0.18,
+            'circle-blur': 0.7,
+          },
+        },
+        'datacenter-pin-halo'
+      );
+      map.addLayer(
+        {
+          id: 'plants',
+          type: 'circle',
+          source: 'plants-src',
+          paint: {
+            'circle-color': ['get', 'color'],
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 2.5, 10, 5, 14, 8],
+            'circle-opacity': 0.92,
+            'circle-stroke-color': COLOR_BG,
+            'circle-stroke-width': 1,
+          },
+        },
+        'datacenter-pin-halo'
+      );
+
+      map.addSource('clouds-src', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: 'clouds-halo',
+        type: 'circle',
+        source: 'clouds-src',
+        paint: {
+          'circle-color': ['get', 'color'],
+          'circle-radius': 12,
+          'circle-opacity': 0.2,
+          'circle-blur': 0.6,
+        },
+      });
+      map.addLayer({
+        id: 'clouds',
+        type: 'circle',
+        source: 'clouds-src',
+        paint: {
+          'circle-color': ['get', 'color'],
+          'circle-radius': 6,
+          'circle-opacity': 0.95,
+          'circle-stroke-color': '#fff',
+          'circle-stroke-width': 1.4,
+        },
+      });
+      map.addLayer({
+        id: 'cloud-labels',
+        type: 'symbol',
+        source: 'clouds-src',
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': 10,
+          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-offset': [0, 1.4],
+          'text-anchor': 'top',
+          'text-allow-overlap': false,
+        },
+        paint: {
+          'text-color': '#fff',
+          'text-halo-color': COLOR_BG,
+          'text-halo-width': 1.5,
+        },
+      });
+
       // Cinematic entry: fit to country bounds with smooth animation.
       if (countryFeature) {
         const bbox = geoBounds(countryFeature) as [[number, number], [number, number]];
@@ -338,6 +460,88 @@ const CountryMap: React.FC<Props> = ({
     const src = map.getSource('datacenters') as maplibregl.GeoJSONSource | undefined;
     if (src) src.setData(pointsGeojson);
   }, [pointsGeojson]);
+
+  // ─── Overlay updates: cables, power plants, cloud regions ─────────────
+  // Cables — push the global cables GeoJSON when toggled on, empty when off
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getSource('cables-src')) return;
+    const src = map.getSource('cables-src') as maplibregl.GeoJSONSource;
+    if (cables?.features) {
+      src.setData(cables);
+    } else {
+      src.setData({ type: 'FeatureCollection', features: [] });
+    }
+  }, [cables]);
+
+  // Power plants — filter to country bounds for perf (~hundreds vs ~35,000)
+  const plantsGeojson = useMemo<GeoJSON.FeatureCollection>(() => {
+    if (!powerPlants || powerPlants.length === 0 || !countryFeature) {
+      return { type: 'FeatureCollection', features: [] };
+    }
+    const [[minLng, minLat], [maxLng, maxLat]] = geoBounds(countryFeature) as [
+      [number, number],
+      [number, number]
+    ];
+    // pad by 1° so coastal plants don't get clipped
+    const pad = 1;
+    const features = powerPlants
+      .filter(
+        (p) =>
+          p.lng >= minLng - pad &&
+          p.lng <= maxLng + pad &&
+          p.lat >= minLat - pad &&
+          p.lat <= maxLat + pad
+      )
+      .map((p) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [p.lng, p.lat] },
+        properties: {
+          name: p.n,
+          fuel: p.f,
+          mw: p.m,
+          color: FUEL_COLORS[p.f] || FUEL_COLORS.Other,
+        },
+      }));
+    return { type: 'FeatureCollection', features };
+  }, [powerPlants, countryFeature]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getSource('plants-src')) return;
+    (map.getSource('plants-src') as maplibregl.GeoJSONSource).setData(plantsGeojson);
+  }, [plantsGeojson]);
+
+  // Cloud regions — filter to enabled providers, also clipped to country bounds
+  const cloudsGeojson = useMemo<GeoJSON.FeatureCollection>(() => {
+    if (!shownClouds || shownClouds.size === 0 || !countryFeature) {
+      return { type: 'FeatureCollection', features: [] };
+    }
+    const [[minLng, minLat], [maxLng, maxLat]] = geoBounds(countryFeature) as [
+      [number, number],
+      [number, number]
+    ];
+    const pad = 2;
+    const features = CLOUD_REGIONS.filter((r) => shownClouds.has(r.provider))
+      .filter(
+        (r) => r.lng >= minLng - pad && r.lng <= maxLng + pad && r.lat >= minLat - pad && r.lat <= maxLat + pad
+      )
+      .map((r) => ({
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [r.lng, r.lat] },
+        properties: {
+          label: `${r.provider} · ${r.code}`,
+          color: CLOUD_COLORS[r.provider],
+        },
+      }));
+    return { type: 'FeatureCollection', features };
+  }, [shownClouds, countryFeature]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !map.getSource('clouds-src')) return;
+    (map.getSource('clouds-src') as maplibregl.GeoJSONSource).setData(cloudsGeojson);
+  }, [cloudsGeojson]);
 
   // Reflect external selectedDc onto feature-state for the active paint
   const lastActiveIdRef = useRef<number | null>(null);
