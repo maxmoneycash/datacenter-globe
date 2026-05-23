@@ -17,6 +17,9 @@ interface GlobeProps {
   cables?: any | null;
   shownClouds?: Set<CloudProvider>;
   hyperscalerFilter?: Exclude<Hyperscaler, null> | null;
+  /** Called once the underlying globe instance is ready so the parent can
+   *  imperatively control camera (e.g. pointOfView for cinematic zooms). */
+  onGlobeReady?: (globeInstance: any) => void;
 }
 
 const PIN_RAYCAST_LAYER = 1;
@@ -76,6 +79,7 @@ const Globe: React.FC<GlobeProps> = ({
   cables,
   shownClouds,
   hyperscalerFilter,
+  onGlobeReady,
 }) => {
   const globeRef = useRef<any>(null);
   const pinsMeshRef = useRef<THREE.Points | null>(null);
@@ -116,12 +120,15 @@ const Globe: React.FC<GlobeProps> = ({
         if (controls) {
           controls.autoRotate = !isPaused;
           controls.autoRotateSpeed = 0.25; // half the speed → less GPU churn
+          // Expose the live instance to the parent on first ready.
+          if (onGlobeReady) onGlobeReady(globeRef.current);
         } else {
           setTimeout(setRotation, 100);
         }
       }
     };
     setRotation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPaused]);
 
   // Minimal scene scaffolding — just the purple rim glow + one ambient light

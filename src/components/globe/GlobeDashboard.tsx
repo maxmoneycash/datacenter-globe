@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { Activity } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { geoCentroid } from 'd3-geo';
 import Globe from './Globe';
 import Legend from './Legend';
 import FpsCounter from './FpsCounter';
@@ -45,6 +46,63 @@ const GlobeDashboard: React.FC = () => {
   // When something in search / nearest panel sets a "pending" datacenter,
   // the CountryPanel auto-selects it after the country view opens.
   const [pendingSelectDc, setPendingSelectDc] = useState<Datacenter | null>(null);
+
+  // Imperative handle to the underlying three-globe instance, exposed by
+  // the Globe component via onGlobeReady. Used for cinematic camera moves.
+  const globeInstanceRef = useRef<any>(null);
+  // Default camera POV — used to restore the globe view when leaving a country.
+  const defaultPovRef = useRef<{ lat: number; lng: number; altitude: number } | null>(null);
+
+  const ZOOM_IN_MS = 900;
+  const ZOOM_OUT_MS = 700;
+  const COUNTRY_ALTITUDE = 0.55; // smaller = closer to country surface
+
+  // Compute a country's centroid from its GeoJSON feature so we know where to fly.
+  const countryCentroid = useCallback(
+    (name: string): { lat: number; lng: number } | null => {
+      if (!countries?.features) return null;
+      const feature = countries.features.find((f: any) => {
+        const raw =
+          f.properties?.ADMIN || f.properties?.NAME || f.properties?.name || f.properties?.admin || '';
+        return raw === name;
+      });
+      if (!feature) return null;
+      const [lng, lat] = geoCentroid(feature) as [number, number];
+      return { lat, lng };
+    },
+    [countries]
+  );
+
+  // Click a country → fly camera to its centroid + zoom in, THEN mount the
+  // country panel. The 100ms head-start makes the camera move feel cinematic.
+  const handleCountryClick = useCallback(
+    (name: string) => {
+      const cent = countryCentroid(name);
+      const globe = globeInstanceRef.current;
+      if (globe && cent) {
+        // Snapshot the resting POV exactly once so we know where to fly back.
+        if (!defaultPovRef.current && globe.pointOfView) {
+          defaultPovRef.current = globe.pointOfView();
+        }
+        globe.pointOfView({ lat: cent.lat, lng: cent.lng, altitude: COUNTRY_ALTITUDE }, ZOOM_IN_MS);
+      }
+      // Mount the country panel ~90% of the way through the camera move so the
+      // panel fade-in finishes just as the camera arrives — feels like one motion.
+      window.setTimeout(() => setSelectedCountry(name), Math.round(ZOOM_IN_MS * 0.85));
+    },
+    [countryCentroid]
+  );
+
+  // Close → fade out the panel AND fly the camera back, in parallel.
+  const handleCountryClose = useCallback(() => {
+    setSelectedCountry(null);
+    setPendingSelectDc(null);
+    const globe = globeInstanceRef.current;
+    const home = defaultPovRef.current;
+    if (globe && home) {
+      globe.pointOfView(home, ZOOM_OUT_MS);
+    }
+  }, []);
 
   useEffect(() => {
     setViewport({ w: window.innerWidth, h: window.innerHeight });
@@ -124,13 +182,16 @@ const GlobeDashboard: React.FC = () => {
       <Globe
         datacenters={visibleDatacenters}
         countryStats={countryStats}
-        onCountryClick={(name) => setSelectedCountry(name)}
+        onCountryClick={handleCountryClick}
         isPaused={!!selectedCountry}
         onBackgroundClick={() => {}}
         selectedCountryName={selectedCountry}
         cables={showCables ? cables : null}
         shownClouds={shownClouds}
         hyperscalerFilter={hyperscalerFilter}
+        onGlobeReady={(g) => {
+          globeInstanceRef.current = g;
+        }}
       />
 
       {/* HUD header — condensed on mobile so it doesn't overlap the globe */}
@@ -179,13 +240,13 @@ const GlobeDashboard: React.FC = () => {
           <SearchBox
             datacenters={datacenters}
             isMobile={isMobile}
-            onSelectCountry={(name) => setSelectedCountry(name)}
+            onSelectCountry={handleCountryClick}
             onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
           />
           <NearestPanel
             datacenters={datacenters}
             isMobile={isMobile}
-            onSelectCountry={(name) => setSelectedCountry(name)}
+            onSelectCountry={handleCountryClick}
             onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
           />
         </>
@@ -240,10 +301,7 @@ const GlobeDashboard: React.FC = () => {
             countries={countries}
             datacenters={datacenters}
             stat={countryStats.get(selectedCountry)}
-            onClose={() => {
-              setSelectedCountry(null);
-              setPendingSelectDc(null);
-            }}
+            onClose={handleCountryClose}
             onEnterTour={(dc) => setTourDc(dc)}
             width={viewport.w}
             height={viewport.h}
