@@ -43,6 +43,20 @@ const FilterHUD: React.FC<Props> = ({
   totalCount,
 }) => {
   const [open, setOpen] = useState(false);
+  const triggerRef = React.useRef<HTMLButtonElement>(null);
+
+  // Escape closes the popover and puts focus back on the trigger. Without it a
+  // keyboard user had to tab through every control inside to get out.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
   // Pulse for ~6s after mount to draw the eye, then settle.
   const [pulse, setPulse] = useState(true);
   useEffect(() => {
@@ -63,9 +77,18 @@ const FilterHUD: React.FC<Props> = ({
       {/* Trigger — bigger by default + pulses for ~6s after first mount so the
           eye actually finds it. Subtitle hints what's inside. */}
       <motion.button
+        ref={triggerRef}
         onClick={() => {
           setOpen((v) => !v);
           setPulse(false);
+        }}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-label="Layers and filters"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape' && open) {
+            setOpen(false);
+          }
         }}
         className={`flex items-center gap-2.5 bg-[#0c0c0e]/92 backdrop-blur-md rounded-full font-mono uppercase tracking-widest text-white relative ${
           isMobile ? 'px-4 py-2.5 text-[12px]' : 'px-4 py-2 text-xs'
@@ -145,7 +168,7 @@ const FilterHUD: React.FC<Props> = ({
                 color="#f87171"
                 onClick={onToggleApproximate}
               />
-              <p className="mt-1 text-[9px] leading-snug text-white/35">
+              <p className="mt-1 text-[9px] leading-snug text-white/60">
                 Facilities we can only place to a region or country. Real sites,
                 guessed pins — thousands share one coordinate.
               </p>
@@ -190,7 +213,7 @@ const FilterHUD: React.FC<Props> = ({
                     <button
                       key={h}
                       onClick={() => onSetHyperscaler(active ? null : h)}
-                      className="flex items-center gap-1.5 px-2 py-1.5 rounded text-[10px] transition-colors text-left"
+                      className="flex items-center gap-1.5 px-2 py-1.5 min-h-[40px] rounded text-[10px] transition-colors text-left"
                       style={{
                         background: active ? `${HYPERSCALER_COLORS[h]}22` : 'transparent',
                         border: `1px solid ${active ? HYPERSCALER_COLORS[h] : 'rgba(255,255,255,0.08)'}`,
@@ -228,7 +251,11 @@ interface ToggleProps {
 const Toggle: React.FC<ToggleProps> = ({ icon, label, count, active, color, onClick }) => (
   <button
     onClick={onClick}
-    className="w-full flex items-center justify-between py-1.5 px-2 -mx-2 rounded text-[11px] transition-colors hover:bg-white/5"
+    // role=switch + aria-checked: on/off was conveyed only by colour and knob
+    // position, so a screen reader could not tell the layer's state.
+    role="switch"
+    aria-checked={active}
+    className="w-full flex items-center justify-between min-h-[44px] py-1.5 px-2 -mx-2 rounded text-[11px] transition-colors hover:bg-white/5"
   >
     <span className="flex items-center gap-2" style={{ color: active ? color : 'rgba(255,255,255,0.75)' }}>
       {icon}

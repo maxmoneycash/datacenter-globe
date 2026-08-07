@@ -93,6 +93,7 @@ const Globe: React.FC<GlobeProps> = ({
   // Shared with the pin shader — bumping .value is the whole cost of a zoom.
   const lodUniformRef = useRef({ value: 0 });
   const lodTiersRef = useRef<Uint8Array | null>(null);
+  const readyNotifiedRef = useRef(false);
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoveredPin, setHoveredPin] = useState<{ dc: Datacenter; sx: number; sy: number } | null>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -124,20 +125,33 @@ const Globe: React.FC<GlobeProps> = ({
   }, []);
 
   useEffect(() => {
+    // The controls are not available synchronously, so this retries until they
+    // are. The timer id is captured so the cleanup can cancel it: without that,
+    // every isPaused change started a fresh chain while older ones kept
+    // running, and a stale chain that resolved later would write its own
+    // captured isPaused over the current one — leaving the globe spinning
+    // behind an open country panel.
+    let timer: number | undefined;
     const setRotation = () => {
       if (globeRef.current) {
         const controls = globeRef.current.controls();
         if (controls) {
           controls.autoRotate = !isPaused;
           controls.autoRotateSpeed = 0.25; // half the speed → less GPU churn
-          // Expose the live instance to the parent on first ready.
-          if (onGlobeReady) onGlobeReady(globeRef.current);
+          // Expose the live instance to the parent once, not on every toggle.
+          if (onGlobeReady && !readyNotifiedRef.current) {
+            readyNotifiedRef.current = true;
+            onGlobeReady(globeRef.current);
+          }
         } else {
-          setTimeout(setRotation, 100);
+          timer = window.setTimeout(setRotation, 100);
         }
       }
     };
     setRotation();
+    return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPaused]);
 
@@ -169,6 +183,8 @@ const Globe: React.FC<GlobeProps> = ({
     return () => {
       scene.remove(rimMesh);
       scene.remove(ambientLight);
+      rimGeo.dispose();
+      rimMat.dispose();
     };
   }, []);
 
@@ -333,6 +349,7 @@ const Globe: React.FC<GlobeProps> = ({
     let current = lodUniformRef.current.value;
     let lastReported = -1;
     let lastReportAt = 0;
+    let lastTiers: Uint8Array | null = null;
 
     // The uniform can update every frame for free; the React state behind the
     // HUD readout cannot, so reporting is throttled. Without this a zoom
@@ -352,6 +369,15 @@ const Globe: React.FC<GlobeProps> = ({
 
       const tiers = lodTiersRef.current;
       if (!tiers || !onLodChange) return;
+      // A filter change swaps in a different tier array without moving the
+      // camera. Keying the "already reported" guard on the array identity as
+      // well as the level means the readout follows the new pin set instead
+      // of showing a count for the old one until the next zoom.
+      if (tiers !== lastTiers) {
+        lastTiers = tiers;
+        lastReported = -1;
+        lastReportAt = 0;
+      }
       const rounded = Math.round(current * 4) / 4;
       if (rounded === lastReported) return;
       const now = performance.now();
@@ -404,15 +430,21 @@ const Globe: React.FC<GlobeProps> = ({
       const hits = raycaster.intersectObject(pinsMeshRef.current, false);
 
       let found: { dc: Datacenter; sx: number; sy: number } | null = null;
+      const tiers = lodTiersRef.current;
+      const lod = lodUniformRef.current.value;
       for (const hit of hits) {
+        if (hit.index === undefined) continue;
         // Hemisphere check — back-of-globe pins are invisible (shader discards
         // them) so we shouldn't allow hovering them.
         const outward = hit.point.clone().normalize();
         const toCam = camera.position.clone().normalize();
-        if (outward.dot(toCam) > 0 && hit.index !== undefined) {
-          found = { dc: datacenters[hit.index], sx: cx, sy: cy };
-          break;
-        }
+        if (outward.dot(toCam) <= 0) continue;
+        // Same test the vertex shader applies: raycasting sees every point in
+        // the buffer, including the tiers this zoom level has not revealed, so
+        // without this the cursor picks up pins that are not on screen.
+        if (tiers && tiers[hit.index] >= lod + 0.99) continue;
+        found = { dc: datacenters[hit.index], sx: cx, sy: cy };
+        break;
       }
       setHoveredPin((prev) => {
         if (prev?.dc === found?.dc && prev?.sx === found?.sx && prev?.sy === found?.sy) return prev;

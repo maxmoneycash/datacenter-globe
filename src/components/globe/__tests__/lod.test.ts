@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   MAX_TIER,
   assignLodTiers,
+  isVisibleAtLevel,
   lodLevelForAltitude,
   visibleAtLevel,
 } from '../lod.ts';
@@ -194,6 +195,64 @@ describe('visibleAtLevel', () => {
     const rows = spread(60);
     const tiers = assignLodTiers(rows);
     assert.equal(visibleAtLevel(tiers, MAX_TIER), rows.length);
+  });
+
+  test('counts exactly what the shader draws', () => {
+    // The shader computes vFade = clamp(uLod - aTier + 1, 0, 1) and discards
+    // at <= 0.01, so it draws every tier below level + 0.99 — including the
+    // one fading in. The count used `tier <= level`, a whole tier tighter, so
+    // mid-zoom the user saw roughly twice as many pins as the readout claimed.
+    const shaderDraws = (tier: number, level: number) =>
+      Math.min(Math.max(level - tier + 1, 0), 1) > 0.01;
+
+    for (let level = 0; level <= MAX_TIER; level += 0.25) {
+      for (let tier = 0; tier <= MAX_TIER; tier++) {
+        assert.equal(
+          isVisibleAtLevel(tier, level),
+          shaderDraws(tier, level),
+          `tier ${tier} at level ${level} disagrees with the shader`
+        );
+      }
+    }
+  });
+
+  test('count matches the predicate applied by hand', () => {
+    const tiers = assignLodTiers(spread(50));
+    for (const level of [0, 0.5, 1, 2.75, MAX_TIER]) {
+      const expected = Array.from(tiers).filter((t) => isVisibleAtLevel(t, level)).length;
+      assert.equal(visibleAtLevel(tiers, level), expected);
+    }
+  });
+
+  test('every tier is reachable across the real altitude range', () => {
+    // A degenerate assignment that dumped everything into tier 0 (or into
+    // MAX_TIER) would satisfy monotonicity and the bounds checks while making
+    // the whole feature pointless, so assert the count actually climbs as the
+    // camera descends through altitudes the globe really uses.
+    const rows = Array.from({ length: 3000 }, (_, i) =>
+      dc({
+        name: `s-${i}`,
+        city_coords: [((i * 7.3) % 140) - 70, ((i * 13.7) % 350) - 175],
+      })
+    );
+    const tiers = assignLodTiers(rows);
+    const counts = [2.5, 1.5, 0.9, 0.5, 0.25].map((alt) =>
+      visibleAtLevel(tiers, lodLevelForAltitude(alt))
+    );
+
+    // Non-decreasing throughout: zooming in must never take a pin away.
+    for (let i = 1; i < counts.length; i++) {
+      assert.ok(counts[i] >= counts[i - 1], `count fell: ${counts.join(' → ')}`);
+    }
+    // Sparse at world zoom and complete at full zoom — the two ends that make
+    // the feature worth having. A distribution that saturates part-way through
+    // is fine; one that starts complete or never completes is not.
+    assert.ok(counts[0] < rows.length / 2, `world zoom not sparse: ${counts[0]}`);
+    assert.equal(counts.at(-1), rows.length, 'full zoom must reveal everything');
+
+    // And the reveal is gradual rather than a single jump from none to all.
+    const distinct = new Set(counts).size;
+    assert.ok(distinct >= 3, `only ${distinct} distinct counts: ${counts.join(' → ')}`);
   });
 
   test('shows strictly fewer than everything at world zoom', () => {

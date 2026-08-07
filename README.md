@@ -10,7 +10,7 @@
 
 ## What it does
 
-- **3D globe** of 18,188 datacenters across 157 countries, colored by density bucket
+- **3D globe** of 18,188 datacenters across 156 countries, colored by density bucket
 - **Search** any country, operator, or named datacenter (⌘K)
 - **Closest to me** — geolocation → 10 nearest sites with distances
 - **Hyperscaler filter** — show only AWS / Microsoft / Google / Meta / Apple / Oracle / IBM / Alibaba / Tencent / ByteDance footprints
@@ -69,10 +69,19 @@ the globe never implies accuracy it does not have.
 python3 scripts/enrich_datacenters.py   # rewrites public/datacenters.json
 ```
 
-The script is idempotent: coordinates it derived on a previous run are marked
-`derived` and recomputed from scratch, so re-running can only improve them.
-Hand-curated rows (those with a `source_url`) are never overwritten, and rows
-we add locally are preserved — upstream only contributes facilities we lack.
+The script runs itself to a fixed point and is genuinely idempotent: a second
+run produces a byte-identical file, which CI would otherwise not catch.
+Reaching that took more care than expected — repairing a country changes what
+the geocoder can resolve, and the city→coordinate donor map grows with every
+facility placed, so a single pass always left the file one improvement short
+of its own output. It now loops until the result stops changing (3 passes on
+current data) and freezes the resolved country code on each row so the answer
+cannot drift.
+
+Coordinates the script derived are marked `derived` and recomputed from
+scratch each pass. Hand-curated rows (those with a `source_url`) are never
+overwritten, and rows we add locally are preserved — upstream only contributes
+facilities we lack, keyed on fields the script does not itself rewrite.
 
 Most rows leave `city`/`state`/`zip` empty while still carrying a full postal
 address, so the last resolution stage parses the address string itself — that
@@ -83,12 +92,12 @@ disambiguated by state, so `Dublin, OH` resolves to Ohio rather than Ireland.
 |---|---|---|
 | `site` | Hand-checked building location | 78 |
 | `postal` | US ZIP centroid (±few km) | 5,005 |
-| `city` | City centroid (±10–25 km) | 11,298 |
+| `city` | City centroid (±10–25 km) | 11,333 |
 | `state` | Region centroid — approximate | 102 |
-| `country` | Country centroid — approximate | 1,190 |
-| *(none)* | Unresolvable | 518 |
+| `country` | Country centroid — approximate | 1,163 |
+| *(none)* | Unresolvable | 507 |
 
-**16,381 facilities (90%) are now placed to city accuracy or better, up from
+**16,416 facilities (90.3%) are now placed to city accuracy or better, up from
 6,182 (34%).** Spot-checked against known locations: Ashburn IAD23 0.9 km,
 Boardman PDX4 2.1 km, Frankfurt FRA54 0.7 km, and `Dublin, OH` resolving to
 Ohio rather than Ireland.
@@ -99,7 +108,7 @@ countries. That was not only mislabelling rows, it was blocking them: every
 geocoding step is gated on knowing the country, so a value like `Taiwan 220`
 meant no coordinates at all. Countries are now resolved with fallbacks,
 canonicalised against the ISO code, and checked against the Natural Earth
-borders as a backstop, leaving **157 real countries** among rendered rows.
+borders as a backstop, leaving **156 real countries** among rendered rows.
 
 `npm run validate:data` enforces all of this in CI — coordinate ranges, a
 precision label on every located row, coverage floors, and a ceiling on the

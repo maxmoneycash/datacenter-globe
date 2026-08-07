@@ -133,7 +133,11 @@ const NearestPanel: React.FC<Props> = ({
                   From {coords.lat.toFixed(2)}°, {coords.lng.toFixed(2)}°
                 </div>
               </div>
-              <button onClick={() => setOpen(false)} className="text-white/45 hover:text-white">
+              <button
+                onClick={() => setOpen(false)}
+                aria-label="Close nearest datacenters"
+                className="p-2 -m-2 text-white/45 hover:text-white"
+              >
                 <X size={16} />
               </button>
             </div>

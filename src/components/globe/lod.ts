@@ -121,9 +121,29 @@ export function lodLevelForAltitude(altitude: number): number {
   return Math.max(0, Math.min(MAX_TIER, octaves * TIERS_PER_OCTAVE));
 }
 
+/**
+ * Whether a tier is on screen at a given level.
+ *
+ * This MUST mirror the pin shader, which computes
+ *   vFade = clamp(uLod - aTier + 1.0, 0.0, 1.0)
+ * and discards when `vFade <= 0.01` — i.e. it draws every tier below
+ * `level + 0.99`, including the one currently fading in.
+ *
+ * It lives here as one exported predicate because the count in the HUD, the
+ * hover raycast and the shader all have to agree. When they were written
+ * separately they disagreed by a whole tier: the readout said `tier <= level`
+ * while the shader was already drawing the next tier in, so mid-zoom the user
+ * saw about twice as many pins as the number claimed.
+ */
+export const FADE_WINDOW = 0.99;
+
+export function isVisibleAtLevel(tier: number, level: number): boolean {
+  return tier < level + FADE_WINDOW;
+}
+
 /** How many pins a given LOD level reveals — for the HUD readout. */
 export function visibleAtLevel(tiers: Uint8Array, level: number): number {
   let n = 0;
-  for (let i = 0; i < tiers.length; i++) if (tiers[i] <= level) n++;
+  for (let i = 0; i < tiers.length; i++) if (isVisibleAtLevel(tiers[i], level)) n++;
   return n;
 }

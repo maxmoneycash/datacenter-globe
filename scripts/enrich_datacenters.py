@@ -38,6 +38,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, ".cache", "gazetteer")
 OUT = os.path.join(ROOT, "public", "datacenters.json")
 
+MAX_PASSES = 8
+
 ATLAS = "https://raw.githubusercontent.com/Ringmast4r/Global-Data-Center-Map/main/"
 GEONAMES = "https://download.geonames.org/export/"
 
@@ -111,6 +113,13 @@ COUNTRY_ALIASES = {
     "suisse": "CH", "schweiz": "CH", "svizzera": "CH", "polska": "PL",
     "mexico": "MX", "peru": "PE", "japon": "JP", "grecia": "GR",
     "sudafrica": "ZA", "la reunion": "RE", "irlanda": "IE", "suecia": "SE",
+    # Official long forms GeoNames lists under a short name
+    "russian federation": "RU", "republic of korea": "KR", "korea republic of": "KR",
+    "republic of china": "TW", "peoples republic of china": "CN",
+    "kingdom of saudi arabia": "SA", "state of israel": "IL",
+    "united mexican states": "MX", "kingdom of the netherlands": "NL",
+    "swiss confederation": "CH", "hellenic republic": "GR",
+    "czechoslovakia": "CZ", "holland": "NL", "u k": "GB", "u s": "US",
     "el salvador": "SV", "trinidad and tobago": "TT", "sri lanka": "LK",
 }
 
@@ -264,8 +273,17 @@ def build_zip_index(us_tsv: str) -> dict[str, tuple[float, float]]:
 US_STATE_ZIP = re.compile(r"^([A-Z]{2})\s+(\d{5})(?:-\d{4})?$")
 US_ZIP_ONLY = re.compile(r"^(\d{5})(?:-\d{4})?$")
 US_STATE_ONLY = re.compile(r"^([A-Z]{2})$")
-# Leading or trailing postal codes attached to the town: "60489 Frankfurt am Main"
-STRIP_POSTCODE = re.compile(r"^\s*[\dA-Z]{2,8}(?:\s+[\dA-Z]{2,4})?\s+(?=[A-Za-z])|\s+\d{3,8}\s*$")
+# Leading or trailing postal codes attached to the town: "60489 Frankfurt am Main".
+# The leading form must contain a digit. An earlier version allowed a pure
+# [A-Z] run here, which silently ate the first word of any capitalised token —
+# "STE 203" became "STE" and matched Ste, Wisconsin, planting a Chennai or
+# Frankfurt facility in the US Midwest with a confident "city" precision.
+# A wrong coordinate is worse than no coordinate, so the class now requires
+# at least one digit while still allowing UK/CA/NL forms like "SW1A 1AA".
+STRIP_POSTCODE = re.compile(
+    r"^\s*(?=[\dA-Z]{2,8}\b)(?=[^\s]*\d)[\dA-Z]{2,8}(?:\s+[\dA-Z]{2,4})?\s+(?=[A-Za-z])"
+    r"|\s+\d{3,8}\s*$"
+)
 
 
 def address_tokens(address: str) -> list[str]:
@@ -399,19 +417,27 @@ def main() -> int:
             facilities = json.load(fh)
 
     def ident(r):
-        return (norm(r.get("name")), norm(r.get("company")), norm(r.get("country")))
+        # Deliberately NOT keyed on country: the repair pass below rewrites
+        # that field, so a committed row would stop matching its upstream twin
+        # and be re-added on the next run. `address` and `city` are carried
+        # through untouched, which makes this key stable across runs.
+        return (
+            norm(r.get("name")),
+            norm(r.get("company")),
+            norm(r.get("address")) or norm(r.get("city")),
+        )
 
     known = {ident(r) for r in facilities}
-    added = [r for r in upstream if ident(r) not in known]
+    added = []
+    for r in upstream:
+        key = ident(r)
+        if key in known:
+            continue
+        # Record as we go, otherwise upstream's own duplicates all pass through.
+        known.add(key)
+        added.append(r)
     facilities += added
     print(f"  {len(facilities) - len(added)} local rows + {len(added)} new upstream rows")
-
-    # Coordinates this script derived on a previous run are recomputed from
-    # scratch, so re-running can only improve them.
-    for r in facilities:
-        if r.pop("derived", False):
-            r.pop("city_coords", None)
-        r.pop("precision", None)
 
     def as_coords(c):
         """Coerce a coordinate pair to floats, or None if it isn't usable."""
@@ -424,12 +450,6 @@ def main() -> int:
         if not (-90 <= lat <= 90 and -180 <= lon <= 180) or (lat == 0 and lon == 0):
             return None
         return (round(lat, 4), round(lon, 4))
-
-    # Upstream calls its coordinate field `city_coords` because that is what it
-    # holds: a city centroid. Only our own curated rows — the ones carrying a
-    # source URL that was checked by hand — are accurate to the building.
-    def is_surveyed(r) -> bool:
-        return bool(r.get("source_url"))
 
     cities_tsv = fetch_zip_member(
         GEONAMES + "dump/cities1000.zip", "cities1000.zip", "cities1000.txt")
@@ -454,24 +474,96 @@ def main() -> int:
         if c:
             by_name.setdefault((norm(r.get("name")), norm(r.get("country"))), c)
 
-    # Cities the upstream set already knows about, keyed the same way we key
+    # Cities the dataset already knows about, keyed the same way we key
     # GeoNames — this catches spellings GeoNames lists under another name.
-    upstream_cities: dict[tuple[str, str], list] = {}
-    for r in facilities + raw:
-        c = as_coords(r.get("city_coords"))
-        if c and r.get("city"):
-            upstream_cities.setdefault((norm(r.get("city")), norm(r.get("country"))), c)
+    #
+    # Rebuilt every pass: each pass places more facilities, which teaches this
+    # map more city coordinates, which lets the next pass place more still.
+    # Building it once meant a fresh run always had a richer map than any
+    # in-process pass, so the file kept improving on every invocation and was
+    # never actually at its fixed point.
+    def build_donor_cities(rows):
+        donor: dict[tuple[str, str], list] = {}
+        for r in rows:
+            c = as_coords(r.get("city_coords"))
+            if c and r.get("city"):
+                donor.setdefault((norm(r.get("city")), norm(r.get("country"))), c)
+        return donor
 
     def zip5(z: str | None) -> str:
         return (z or "").strip().split("-")[0].zfill(5) if (z or "").strip() else ""
 
+    # Repairing the country field changes what the geocoder can resolve on the
+    # NEXT row set — a facility whose country was junk gets placed by address
+    # fallback, then the repair gives it a real country, and only then can the
+    # city lookup succeed. Running resolve-then-repair once therefore leaves
+    # the file one pass short of its own fixed point, and a re-run would keep
+    # improving it. Two passes reach the fixed point on this data; the loop
+    # stops early when nothing moves so it stays honest if that changes.
+    out: list = []
     stats: dict[str, int] = defaultdict(int)
-    out = []
 
+    # Loop until the output stops changing, comparing the actual result rather
+    # than a proxy signal — an earlier version counted "rows the repair
+    # rewrote" and mistook a two-state oscillation for convergence. Comparing
+    # the serialised output is the only condition that guarantees a re-run is
+    # a no-op, which is the property this pipeline actually needs.
+    previous = None
+    for _pass in range(MAX_PASSES):
+        stats = defaultdict(int)
+        out = resolve_all(
+            facilities, iso, cities, cities_admin, admin1, admin1_names,
+            countries, zips, by_name, build_donor_cities(facilities + raw),
+            as_coords, stats,
+        )
+        repair_countries(out, iso, as_coords, verbose=(_pass == 0))
+        current = json.dumps(out, sort_keys=True, ensure_ascii=False)
+        if current == previous:
+            break
+        previous = current
+        # Feed the repaired countries back in for the next pass.
+        facilities = out
+    else:
+        print(f"  WARNING: still changing after {MAX_PASSES} passes")
+
+    print(f"  converged after {_pass + 1} pass(es)")
+    return finish(out, stats)
+
+
+# Upstream calls its coordinate field `city_coords` because that is what it
+# holds: a city centroid. Only our own curated rows — the ones carrying a
+# source URL that was checked by hand — are accurate to the building.
+def is_surveyed(r) -> bool:
+    return bool(r.get("source_url"))
+
+
+def resolve_all(
+    facilities, iso, cities, cities_admin, admin1, admin1_names,
+    countries, zips, by_name, upstream_cities, as_coords, stats,
+):
+    def zip5(z: str | None) -> str:
+        return (z or "").strip().split("-")[0].zfill(5) if (z or "").strip() else ""
+
+    out = []
     for r in facilities:
         rec = dict(r)
+        # Coordinates this script derived — on a previous run or a previous
+        # pass — are recomputed from scratch. Without this, pass 2 would read
+        # pass 1's country-centroid guess as if it were a source coordinate
+        # and relabel it "city".
+        if rec.pop("derived", False):
+            rec.pop("city_coords", None)
+        rec.pop("precision", None)
+        r = rec
         country = r.get("country") or ""
-        iso2 = resolve_iso2(r, iso)
+        # Persisted so this decision is made once and never re-derived. The
+        # country field gets rewritten by the repair below, which changes what
+        # resolve_iso2 would answer next time — recomputing it made the whole
+        # pipeline oscillate instead of converging. Reading it back also makes
+        # a re-run a pure function of the committed file.
+        iso2 = rec.get("country_iso") or resolve_iso2(r, iso)
+        if iso2:
+            rec["country_iso"] = iso2
         coords = None
         precision = None
         derived = True
@@ -552,6 +644,12 @@ def main() -> int:
 
         out.append(rec)
 
+    return out
+
+
+def repair_countries(out, iso, as_coords, verbose: bool = True) -> int:
+    """Canonicalise the country field. Returns how many rows changed.
+
     # ---------------------------------------------------------------
     # Repair the country field.
     #
@@ -567,14 +665,17 @@ def main() -> int:
     # coordinate we just resolved — the same file the globe draws, so a
     # repaired name always matches a polygon that can be coloured in.
     # ---------------------------------------------------------------
+    """
     # Canonical display name per ISO2, voted for by the rows that already
     # carry a clean country string. Those names are what the globe's polygon
     # matcher already agrees with, so reusing them keeps repaired rows
     # clickable rather than inventing a spelling nothing matches.
     name_votes: dict[str, Counter] = defaultdict(Counter)
     for rec in out:
-        code = iso.get(norm(rec.get("country")))
-        if code:
+        code = rec.get("country_iso")
+        # Only rows whose country string is itself a recognisable country get
+        # a vote — otherwise junk like "Taiwan 220" could win the ballot for TW.
+        if code and iso.get(norm(rec.get("country"))) == code:
             name_votes[code][rec["country"]] += 1
     iso2_name = {code: votes.most_common(1)[0][0] for code, votes in name_votes.items()}
 
@@ -588,7 +689,7 @@ def main() -> int:
         #    "Taiwán" all resolve to a valid code while still being a distinct
         #    string to the map, which is how one country becomes three
         #    entries in the country list.
-        code = resolve_iso2(rec, iso)
+        code = rec.get("country_iso") or ""
         canonical = iso2_name.get(code)
         if canonical:
             if rec.get("country") != canonical:
@@ -600,14 +701,25 @@ def main() -> int:
         c = as_coords(rec.get("city_coords"))
         name = country_at(c[0], c[1], polygons) if c and polygons else ""
         if name:
-            rec["country"] = name
+            # Route the polygon's own spelling through the same canonical table
+            # the branch above uses. Natural Earth says "United States of
+            # America" while the dataset says "United States"; emitting both
+            # recreates exactly the split this repair exists to remove.
+            polygon_code = iso.get(norm(name))
+            if polygon_code:
+                rec["country_iso"] = polygon_code
+            rec["country"] = iso2_name.get(polygon_code, name) if polygon_code else name
             by_polygon += 1
         else:
             unrepairable += 1
 
-    print(f"\n  country field: {by_code} repaired by code, "
-          f"{by_polygon} by borders, {unrepairable} still unusable")
+    if verbose:
+        print(f"\n  country field: {by_code} repaired by code, "
+              f"{by_polygon} by borders, {unrepairable} still unusable")
+    return by_code + by_polygon
 
+
+def finish(out, stats) -> int:
     total = len(out)
     located = total - stats["unresolved"]
     print(f"\n  {total} facilities")

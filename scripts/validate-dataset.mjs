@@ -39,6 +39,24 @@ const PRECISE = new Set(['site', 'postal', 'city']);
 const MAX_MISSING_COMPANY = 30;
 const MAX_MISSING_COUNTRY = 200;
 
+/**
+ * A ceiling as well as a floor. The enrichment script merges new upstream rows
+ * into the committed file, and a merge key that is not stable across runs
+ * silently re-adds hundreds of rows every time — which is exactly what
+ * happened: the file grew 18,188 -> 18,549 on a single re-run, stacking
+ * duplicate pins on the same coordinate and inflating every per-country count.
+ * A floor alone cannot see that.
+ */
+const MAX_ROWS = 19_500;
+
+/**
+ * Upstream ATLAS itself lists 13 facilities twice (same name, operator and
+ * address). They are carried rather than silently dropped, so the ceiling
+ * tolerates the known set while still catching a merge that starts
+ * manufacturing new ones.
+ */
+const MAX_DUPLICATES = 20;
+
 const errors = [];
 const fail = (msg) => errors.push(msg);
 
@@ -65,6 +83,10 @@ let sampleBadCoord = null;
 let sampleBadPrecision = null;
 let missingCountry = 0;
 let missingCompany = 0;
+// Identity as the enrichment script defines it. Duplicates here mean the same
+// facility was merged in more than once.
+const seen = new Set();
+const duplicates = new Set();
 
 for (let i = 0; i < rows.length; i++) {
   const r = rows[i];
@@ -73,6 +95,9 @@ for (let i = 0; i < rows.length; i++) {
     continue;
   }
   if (!r.name) fail(`row ${i} has no name`);
+  const id = [r.name, r.company, r.address || r.city].join('|').toLowerCase();
+  if (seen.has(id)) duplicates.add(id);
+  else seen.add(id);
   if (!r.company) missingCompany++;
   if (!r.country) missingCountry++;
   else countries.add(r.country);
@@ -125,6 +150,14 @@ if (renderedCountries.size > MAX_COUNTRIES_RENDERED)
       `ceiling is ${MAX_COUNTRIES_RENDERED} — country field likely polluted`
   );
 if (rows.length < MIN_ROWS) fail(`only ${rows.length} rows, expected >= ${MIN_ROWS}`);
+if (rows.length > MAX_ROWS)
+  fail(`${rows.length} rows exceeds ceiling ${MAX_ROWS} — likely duplicated on merge`);
+if (duplicates.size > MAX_DUPLICATES)
+  fail(
+    `${duplicates.size} duplicated identities (ceiling ${MAX_DUPLICATES}), ` +
+      `e.g. ${[...duplicates][0]} — the enrichment merge key is probably ` +
+      `unstable across runs`
+  );
 if (located < MIN_LOCATED) fail(`only ${located} located rows, expected >= ${MIN_LOCATED}`);
 if (precise < MIN_PRECISE) fail(`only ${precise} precise rows, expected >= ${MIN_PRECISE}`);
 if (countries.size < MIN_COUNTRIES)
@@ -140,6 +173,7 @@ console.log(`  located  ${String(located).padStart(6)}  ${pct(located)}`);
 console.log(`  precise  ${String(precise).padStart(6)}  ${pct(precise)}`);
 console.log(`  ${renderedCountries.size} distinct countries among rendered rows`);
 console.log(`  ${missingCompany} rows without company, ${missingCountry} without country`);
+console.log(`  ${duplicates.size} duplicated identities`);
 
 if (errors.length) {
   console.error(`\n${errors.length} problem(s):`);

@@ -50,7 +50,9 @@ const Legend: React.FC<Props> = ({
         <div className="mt-3 pt-3 border-t border-white/10">
           <h3 className="mb-1 text-gray-400 font-bold uppercase tracking-widest">Shown at this zoom</h3>
           <p className="text-gray-500 tabular-nums">
-            {visibleAtZoom.toLocaleString()} of {pinTotal.toLocaleString()} pins · zoom in for more
+            {visibleAtZoom >= pinTotal
+              ? `all ${pinTotal.toLocaleString()} pins shown`
+              : `${visibleAtZoom.toLocaleString()} of ${pinTotal.toLocaleString()} pins · zoom in for more`}
           </p>
         </div>
       )}
