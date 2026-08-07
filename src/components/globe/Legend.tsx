@@ -1,14 +1,25 @@
 import React from 'react';
+import { HUD_PANEL } from './hud';
 
 interface Props {
   totalSites: number;
   totalCountries: number;
   preciseSites: number;
+  /** Pins the current zoom level reveals — see lod.ts. */
+  visibleAtZoom: number;
+  /** Pins eligible to be drawn under the active filters. */
+  pinTotal: number;
 }
 
-const Legend: React.FC<Props> = ({ totalSites, totalCountries, preciseSites }) => {
+const Legend: React.FC<Props> = ({
+  totalSites,
+  totalCountries,
+  preciseSites,
+  visibleAtZoom,
+  pinTotal,
+}) => {
   return (
-    <div className="absolute bottom-8 left-8 z-10 p-4 bg-[#0c0c0e]/75 backdrop-blur-md border border-white/10 rounded-lg text-xs font-mono select-none pointer-events-none">
+    <div className={`p-4 text-xs font-mono select-none pointer-events-auto ${HUD_PANEL}`}>
       <h3 className="mb-2 text-gray-400 font-bold uppercase tracking-widest">Datacenter Density</h3>
       <div className="space-y-2">
         <div className="flex items-center gap-2">
@@ -33,7 +44,18 @@ const Legend: React.FC<Props> = ({ totalSites, totalCountries, preciseSites }) =
         </div>
       </div>
 
-      <div className="mt-4 pt-4 border-t border-white/10">
+      {/* Explains why the globe is sparse at world zoom instead of leaving the
+          user to assume the data is missing. */}
+      {visibleAtZoom > 0 && (
+        <div className="mt-3 pt-3 border-t border-white/10">
+          <h3 className="mb-1 text-gray-400 font-bold uppercase tracking-widest">Shown at this zoom</h3>
+          <p className="text-gray-500 tabular-nums">
+            {visibleAtZoom.toLocaleString()} of {pinTotal.toLocaleString()} pins · zoom in for more
+          </p>
+        </div>
+      )}
+
+      <div className="mt-3 pt-3 border-t border-white/10">
         <h3 className="mb-1 text-gray-400 font-bold uppercase tracking-widest">Data Sources</h3>
         <p className="text-gray-500">
           Data centers ©{' '}

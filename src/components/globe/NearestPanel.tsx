@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Navigation, X, Loader2 } from 'lucide-react';
 import { isApproximate } from './precision';
+import { HUD_CHIP, HUD_MONO } from './hud';
 import type { Datacenter } from './types';
 
 interface Props {
@@ -73,24 +74,17 @@ const NearestPanel: React.FC<Props> = ({
   }, [datacenters, coords]);
 
   return (
-    <>
-      {/* Trigger chip — desktop: top-left below header. Mobile: bottom-left so
-          it never collides with the search dropdown at the top of the screen. */}
-      <div
-        className={`absolute z-30 pointer-events-auto ${isMobile ? 'left-3' : 'top-24 left-6'}`}
-        style={
-          isMobile
-            ? { bottom: 'calc(env(safe-area-inset-bottom) + 12px)' }
-            : undefined
-        }
-      >
+    // Position comes from the HUD rail in GlobeDashboard — this component only
+    // owns its own stacking, so it can never land on top of another panel.
+    <div className="relative pointer-events-auto">
+      <div>
         <motion.button
           onClick={() => (coords ? setOpen((v) => !v) : requestLocation())}
-          className={`flex items-center gap-2 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded-full font-mono uppercase tracking-widest text-white/85 ${
+          className={`flex items-center gap-2 uppercase tracking-widest text-white/85 ${HUD_CHIP} ${
             isMobile ? 'px-4 py-2.5 text-[12px]' : 'px-3 py-1.5 text-xs'
           }`}
           whileTap={{ scale: 0.96 }}
-          style={{ fontFamily: 'JetBrains Mono, monospace' }}
+          style={{ fontFamily: HUD_MONO }}
           disabled={loading}
         >
           {loading ? (
@@ -103,7 +97,7 @@ const NearestPanel: React.FC<Props> = ({
         {error && (
           <div
             className="mt-2 bg-red-900/40 border border-red-500/40 rounded px-2 py-1 text-[10px] text-red-200 max-w-[260px]"
-            style={{ fontFamily: 'JetBrains Mono, monospace' }}
+            style={{ fontFamily: HUD_MONO }}
           >
             {error}
           </div>
@@ -118,12 +112,12 @@ const NearestPanel: React.FC<Props> = ({
             animate={isMobile ? { y: 0 } : { opacity: 1, x: 0 }}
             exit={isMobile ? { y: '100%' } : { opacity: 0, x: -10 }}
             transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1] }}
-            className={`absolute z-40 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden pointer-events-auto ${
+            className={`z-40 bg-[#0c0c0e]/95 backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden pointer-events-auto ${
               isMobile
-                ? 'left-0 right-0 bottom-0 rounded-t-2xl max-h-[70vh] overflow-y-auto pb-safe'
-                : 'top-20 left-6 w-[340px] rounded-xl max-h-[70vh] overflow-y-auto'
+                ? 'fixed left-0 right-0 bottom-0 rounded-t-2xl max-h-[70vh] overflow-y-auto pb-safe'
+                : 'absolute top-full left-0 mt-2 w-[340px] rounded-xl max-h-[60vh] overflow-y-auto'
             }`}
-            style={{ fontFamily: 'JetBrains Mono, monospace' }}
+            style={{ fontFamily: HUD_MONO }}
           >
             {isMobile && (
               <div className="flex justify-center pt-2 pb-1">
@@ -178,7 +172,7 @@ const NearestPanel: React.FC<Props> = ({
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </div>
   );
 };
 

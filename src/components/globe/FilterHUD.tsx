@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Layers, Cable, Cloud, Building2, X, Zap, MapPin } from 'lucide-react';
 import { CLOUD_COLORS, type CloudProvider } from './cloudRegions';
+import { HUD_MONO } from './hud';
 import { HYPERSCALER_COLORS, HYPERSCALER_LIST, type Hyperscaler } from './hyperscalers';
 
 interface Props {
@@ -56,14 +57,9 @@ const FilterHUD: React.FC<Props> = ({
     (hyperscalerFilter ? 1 : 0);
 
   return (
-    <div
-      className={`absolute z-30 pointer-events-auto ${isMobile ? 'right-3' : 'top-6 right-6'}`}
-      style={
-        isMobile
-          ? { bottom: 'calc(env(safe-area-inset-bottom) + 12px)' }
-          : undefined
-      }
-    >
+    // Positioned by the HUD rail in GlobeDashboard; only the popover is
+    // anchored here, to the trigger.
+    <div className="relative pointer-events-auto">
       {/* Trigger — bigger by default + pulses for ~6s after first mount so the
           eye actually finds it. Subtitle hints what's inside. */}
       <motion.button
@@ -76,7 +72,7 @@ const FilterHUD: React.FC<Props> = ({
         }`}
         whileTap={{ scale: 0.96 }}
         style={{
-          fontFamily: 'JetBrains Mono, monospace',
+          fontFamily: HUD_MONO,
           border: '1.5px solid #ff9f43',
           boxShadow: pulse ? '0 0 0 0 rgba(255,159,67,0.6)' : '0 0 0 0 rgba(255,159,67,0)',
           animation: pulse ? 'pulse-glow 1.8s ease-out infinite' : 'none',
@@ -110,7 +106,7 @@ const FilterHUD: React.FC<Props> = ({
             }`}
             style={{
               width: isMobile ? 260 : 280,
-              fontFamily: 'JetBrains Mono, monospace',
+              fontFamily: HUD_MONO,
             }}
           >
             {/* Network & Energy infrastructure */}

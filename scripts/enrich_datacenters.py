@@ -129,9 +129,11 @@ def build_country_index(country_info: str) -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 def build_gazetteers(cities_tsv: str, admin1_tsv: str):
-    """Return (city index, admin1 centroids, country centroids)."""
+    """Return (city index, admin1-keyed city index, admin1, admin1 names, country centroids)."""
     # (iso2, normalised city) -> (lat, lon); keep the most populous match
     cities: dict[tuple[str, str], tuple[float, float, int]] = {}
+    # (iso2, admin1, city) -> coords; disambiguates repeated US town names
+    cities_admin: dict[tuple[str, str, str], tuple[float, float, int]] = {}
     # population-weighted accumulators
     admin_acc: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0])
     country_acc: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0])
@@ -170,6 +172,11 @@ def build_gazetteers(cities_tsv: str, admin1_tsv: str):
             prev = cities.get(key)
             if prev is None or pop > prev[2]:
                 cities[key] = (lat, lon, pop)
+            if admin1:
+                akey = (iso2, admin1, key[1])
+                aprev = cities_admin.get(akey)
+                if aprev is None or pop > aprev[2]:
+                    cities_admin[akey] = (lat, lon, pop)
 
     admin1: dict[str, tuple[float, float]] = {}
     for code, (slat, slon, sw) in admin_acc.items():
@@ -195,7 +202,7 @@ def build_gazetteers(cities_tsv: str, admin1_tsv: str):
         # US rows sometimes carry the postal abbreviation instead
         admin1_names.setdefault((iso2, norm(code.split(".")[-1])), code)
 
-    return cities, admin1, admin1_names, countries
+    return cities, cities_admin, admin1, admin1_names, countries
 
 
 def build_zip_index(us_tsv: str) -> dict[str, tuple[float, float]]:
@@ -209,6 +216,64 @@ def build_zip_index(us_tsv: str) -> dict[str, tuple[float, float]]:
         except ValueError:
             continue
     return idx
+
+
+# --------------------------------------------------------------------------
+# free-text address parsing
+# --------------------------------------------------------------------------
+
+# "Ashburn, VA 20147" / "Boardman, OR 97818-1234"
+US_STATE_ZIP = re.compile(r"^([A-Z]{2})\s+(\d{5})(?:-\d{4})?$")
+US_ZIP_ONLY = re.compile(r"^(\d{5})(?:-\d{4})?$")
+US_STATE_ONLY = re.compile(r"^([A-Z]{2})$")
+# Leading or trailing postal codes attached to the town: "60489 Frankfurt am Main"
+STRIP_POSTCODE = re.compile(r"^\s*[\dA-Z]{2,8}(?:\s+[\dA-Z]{2,4})?\s+(?=[A-Za-z])|\s+\d{3,8}\s*$")
+
+
+def address_tokens(address: str) -> list[str]:
+    """Comma-separated address parts, most-specific last, cleaned of noise."""
+    parts = [p.strip() for p in (address or "").split(",")]
+    return [p for p in parts if p]
+
+
+def parse_us_address(tokens: list[str]) -> tuple[str, str]:
+    """Return (zip5, state_code) recovered from a US address tail."""
+    zip5 = state = ""
+    for tok in tokens:
+        m = US_STATE_ZIP.match(tok)
+        if m:
+            state, zip5 = m.group(1), m.group(2)
+            continue
+        if not zip5:
+            m = US_ZIP_ONLY.match(tok)
+            if m:
+                zip5 = m.group(1)
+        if not state:
+            m = US_STATE_ONLY.match(tok)
+            if m and m.group(1) not in {"US", "USA"}:
+                state = m.group(1)
+    return zip5, state
+
+
+def city_candidates(tokens: list[str]) -> list[str]:
+    """
+    Address parts that could name a settlement, most-likely first.
+
+    Addresses run street → district → city → region → country, so the city is
+    usually near the end. We walk inward from the country end and let the
+    gazetteer decide which candidate is real.
+    """
+    out: list[str] = []
+    # Skip the final token (country) and walk backwards.
+    for tok in reversed(tokens[:-1] if len(tokens) > 1 else tokens):
+        cleaned = STRIP_POSTCODE.sub("", tok).strip()
+        # Drop pure numbers, state+zip tails, and obvious street lines.
+        if not cleaned or cleaned.isdigit():
+            continue
+        if US_STATE_ZIP.match(tok) or US_ZIP_ONLY.match(tok) or US_STATE_ONLY.match(tok):
+            continue
+        out.append(cleaned)
+    return out[:4]
 
 
 # --------------------------------------------------------------------------
@@ -271,7 +336,8 @@ def main() -> int:
 
     print("Building gazetteers ...")
     iso = build_country_index(country_tsv)
-    cities, admin1, admin1_names, countries = build_gazetteers(cities_tsv, admin1_tsv)
+    cities, cities_admin, admin1, admin1_names, countries = build_gazetteers(
+        cities_tsv, admin1_tsv)
     zips = build_zip_index(us_tsv)
     print(f"  {len(cities)} city keys, {len(admin1)} admin1, "
           f"{len(countries)} countries, {len(zips)} US ZIPs")
@@ -337,13 +403,35 @@ def main() -> int:
                 if c:
                     coords, precision = c, "city"
 
-        # 5. state / admin1 centroid
+        # 5. Parse the free-text address. Thousands of rows carry a full
+        #    postal address while leaving city/state/zip empty, so this is the
+        #    difference between a real pin and a country centroid for them.
+        if coords is None and r.get("address"):
+            toks = address_tokens(r["address"])
+            if iso2 == "US":
+                z, st = parse_us_address(toks)
+                if z in zips:
+                    coords, precision = zips[z], "postal"
+                elif st:
+                    for cand in city_candidates(toks):
+                        hit = cities_admin.get((iso2, st, norm(cand)))
+                        if hit:
+                            coords, precision = (hit[0], hit[1]), "city"
+                            break
+            if coords is None and iso2:
+                for cand in city_candidates(toks):
+                    hit = cities.get((iso2, norm(cand)))
+                    if hit:
+                        coords, precision = (hit[0], hit[1]), "city"
+                        break
+
+        # 6. state / admin1 centroid
         if coords is None and r.get("state") and iso2:
             code = admin1_names.get((iso2, norm(r.get("state"))))
             if code and code in admin1:
                 coords, precision = admin1[code], "state"
 
-        # 6. country centroid — last resort
+        # 7. country centroid — last resort
         if coords is None and iso2 in countries:
             coords, precision = countries[iso2], "country"
 

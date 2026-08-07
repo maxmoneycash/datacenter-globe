@@ -36,6 +36,7 @@
 | Layer | Source |
 |---|---|
 | Datacenter inventory | [Ringmast4r/Global-Data-Center-Map](https://github.com/Ringmast4r/Global-Data-Center-Map) (ATLAS) |
+| Zoom LOD approach | adapted from [aminalav/chip-sense](https://github.com/aminalav/chip-sense) `src/lib/mapLabels.ts` (MIT) |
 | Geocoding gazetteer | [GeoNames](https://www.geonames.org/) — `cities1000`, US postal codes, admin1 codes (CC BY 4.0) |
 | Norway-specific metadata (MW, owner, status) | [disi910/DataNorge](https://github.com/disi910/DataNorge) |
 | Country borders | Natural Earth `ne_110m_admin_0_countries`, vendored to `public/countries-110m.geojson` |
@@ -73,19 +74,44 @@ The script is idempotent: coordinates it derived on a previous run are marked
 Hand-curated rows (those with a `source_url`) are never overwritten, and rows
 we add locally are preserved — upstream only contributes facilities we lack.
 
+Most rows leave `city`/`state`/`zip` empty while still carrying a full postal
+address, so the last resolution stage parses the address string itself — that
+one step moved 5,300 facilities off country centroids. US addresses are
+disambiguated by state, so `Dublin, OH` resolves to Ohio rather than Ireland.
+
 | `precision` | Method | Count |
 |---|---|---|
 | `site` | Hand-checked building location | 78 |
-| `postal` | US ZIP centroid (±few km) | 4,509 |
-| `city` | City centroid (±10–25 km) | 6,348 |
+| `postal` | US ZIP centroid (±few km) | 5,005 |
+| `city` | City centroid (±10–25 km) | 11,144 |
 | `state` | Region centroid — approximate | 102 |
-| `country` | Country centroid — approximate | 6,428 |
+| `country` | Country centroid — approximate | 1,136 |
 | *(none)* | Unresolvable | 723 |
 
-**10,935 facilities (60%) are now placed to city accuracy or better, up from
-6,182 (34%).** `state` and `country` rows are real facilities with guessed
-pins — thousands share a single coordinate — so they are hidden behind the
-*Location Accuracy* toggle and excluded from "closest to me" distances.
+**16,227 facilities (89%) are now placed to city accuracy or better, up from
+6,182 (34%), across 179 countries.** Spot-checked against known locations:
+Ashburn IAD23 0.9 km, Boardman PDX4 2.1 km, Frankfurt FRA54 0.7 km.
+
+`state` and `country` rows are real facilities with guessed pins — thousands
+share a single coordinate — so they are hidden behind the *Location Accuracy*
+toggle and excluded from "closest to me" distances.
+
+## Map rendering
+
+**Zoom level-of-detail.** 16k pins at world zoom is a smear over Virginia that
+says nothing, so pins carry a reveal tier and the globe uncovers tiers as the
+camera comes in (~200 pins at world zoom, all of them at full zoom). Tiers are
+a *stratified spatial sample*: at each level the world is cut into a grid and
+only the most significant facility per cell is promoted, so the world view
+stays geographically even instead of collapsing onto whichever region has the
+most rows. The tier lives in a vertex attribute and the zoom level in a single
+uniform, so a zoom costs one float — see `src/components/globe/lod.ts`.
+
+**HUD layout.** Floating panels do not position themselves. `GlobeDashboard`
+places them into four rails (two top, two bottom) with flex gaps, and
+`src/components/globe/hud.ts` holds the one copy of the panel surface styles.
+This is what stops the stats card from landing on the legend and the FPS chip
+from landing under the Layers button, as both used to.
 
 ## Local dev
 

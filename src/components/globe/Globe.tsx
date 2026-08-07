@@ -7,6 +7,7 @@ import { useIsTouch } from './useIsMobile';
 import { CLOUD_REGIONS, CLOUD_COLORS, type CloudProvider } from './cloudRegions';
 import { HYPERSCALER_COLORS, type Hyperscaler } from './hyperscalers';
 import { plantColor, type PowerPlant } from './powerplants';
+import { assignLodTiers, lodLevelForAltitude, visibleAtLevel } from './lod';
 
 interface GlobeProps {
   datacenters: Datacenter[];
@@ -22,6 +23,8 @@ interface GlobeProps {
   /** Called once the underlying globe instance is ready so the parent can
    *  imperatively control camera (e.g. pointOfView for cinematic zooms). */
   onGlobeReady?: (globeInstance: any) => void;
+  /** Reports how many pins the current zoom level reveals, for the HUD. */
+  onLodChange?: (visible: number, total: number) => void;
 }
 
 const PIN_RAYCAST_LAYER = 1;
@@ -83,9 +86,13 @@ const Globe: React.FC<GlobeProps> = ({
   shownClouds,
   hyperscalerFilter,
   onGlobeReady,
+  onLodChange,
 }) => {
   const globeRef = useRef<any>(null);
   const pinsMeshRef = useRef<THREE.Points | null>(null);
+  // Shared with the pin shader — bumping .value is the whole cost of a zoom.
+  const lodUniformRef = useRef({ value: 0 });
+  const lodTiersRef = useRef<Uint8Array | null>(null);
   const [countries, setCountries] = useState<any>({ features: [] });
   const [hoveredPin, setHoveredPin] = useState<{ dc: Datacenter; sx: number; sy: number } | null>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
@@ -209,8 +216,16 @@ const Globe: React.FC<GlobeProps> = ({
       positions[i * 3 + 2] = v.z;
     }
 
+    // Reveal tier per pin — see lod.ts. Uploaded once as a vertex attribute so
+    // zooming only has to move a single uniform.
+    const tiers = assignLodTiers(datacenters);
+    lodTiersRef.current = tiers;
+    const tierAttr = new Float32Array(datacenters.length);
+    for (let i = 0; i < tiers.length; i++) tierAttr[i] = tiers[i];
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('aTier', new THREE.BufferAttribute(tierAttr, 1));
 
     const texture = makeEmojiTexture('📍');
 
@@ -218,18 +233,26 @@ const Globe: React.FC<GlobeProps> = ({
       map: texture,
       size: PIN_SIZE,
       transparent: true,
+      // Runs before our fade, so the emoji's transparent border is still cut
+      // out cleanly and only the surviving pixels get faded.
       alphaTest: 0.1,
       depthTest: true,
       depthWrite: false,
       sizeAttenuation: true,
     });
 
-    // Inject hemisphere-visibility test into the shader. Pins whose outward
-    // direction points away from the camera are discarded so back-of-globe
-    // pins don't bleed through the semi-transparent sphere.
+    // Inject two things into the stock points shader:
+    //   1. hemisphere culling, so pins on the far side of the semi-transparent
+    //      globe don't bleed through;
+    //   2. the LOD test — pins above the current level are dropped, and the
+    //      newest tier fades in over its final unit so nothing pops.
     material.onBeforeCompile = (shader) => {
+      shader.uniforms.uLod = lodUniformRef.current;
       shader.vertexShader = `
+        attribute float aTier;
+        uniform float uLod;
         varying float vVisible;
+        varying float vFade;
         ${shader.vertexShader}
       `.replace(
         '#include <begin_vertex>',
@@ -239,17 +262,38 @@ const Globe: React.FC<GlobeProps> = ({
         vec3 outward = normalize(worldPos);
         vec3 toCamera = normalize(cameraPosition - vec3(0.0));
         vVisible = dot(outward, toCamera);
+        vFade = clamp(uLod - aTier + 1.0, 0.0, 1.0);
         `
-      );
+      )
+        // Fewer pins on screen means each one can afford to be larger. This
+        // keeps the sparse world view legible without the dense zoomed-in
+        // view turning into overlapping blobs.
+        .replace(
+          'gl_PointSize = size;',
+          'gl_PointSize = size * mix(1.75, 1.0, clamp(uLod / 3.0, 0.0, 1.0));'
+        );
       shader.fragmentShader = `
         varying float vVisible;
+        varying float vFade;
         ${shader.fragmentShader}
-      `.replace(
-        'void main() {',
-        `void main() {
+      `
+        .replace(
+          'void main() {',
+          `void main() {
           if (vVisible < 0.0) discard;
+          if (vFade <= 0.01) discard;
         `
-      );
+        )
+        // opaque_fragment builds gl_FragColor from diffuseColor, so the fade
+        // has to be applied to diffuseColor before that include — writing to
+        // gl_FragColor first would just be overwritten.
+        .replace(
+          '#include <opaque_fragment>',
+          `
+          diffuseColor.a *= vFade;
+          #include <opaque_fragment>
+          `
+        );
     };
 
     const pinsMesh = new THREE.Points(geometry, material);
@@ -272,8 +316,54 @@ const Globe: React.FC<GlobeProps> = ({
       material.dispose();
       texture.dispose();
       pinsMeshRef.current = null;
+      lodTiersRef.current = null;
     };
   }, [datacenters]);
+
+  /**
+   * Drive the LOD uniform from camera altitude.
+   *
+   * Polled on rAF rather than hooked to a controls event because the camera
+   * also moves under programmatic pointOfView() flights, which emit no change
+   * event. The level is eased toward its target so a fast zoom reveals pins
+   * smoothly instead of dumping a tier in one frame.
+   */
+  useEffect(() => {
+    let raf = 0;
+    let current = lodUniformRef.current.value;
+    let lastReported = -1;
+    let lastReportAt = 0;
+
+    // The uniform can update every frame for free; the React state behind the
+    // HUD readout cannot, so reporting is throttled. Without this a zoom
+    // gesture would re-render the whole dashboard — globe included — dozens of
+    // times a second to change one number.
+    const REPORT_MS = 250;
+
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const globe = globeRef.current;
+      if (!globe?.pointOfView) return;
+
+      const target = lodLevelForAltitude(globe.pointOfView().altitude);
+      current += (target - current) * 0.12;
+      if (Math.abs(target - current) < 0.001) current = target;
+      lodUniformRef.current.value = current;
+
+      const tiers = lodTiersRef.current;
+      if (!tiers || !onLodChange) return;
+      const rounded = Math.round(current * 4) / 4;
+      if (rounded === lastReported) return;
+      const now = performance.now();
+      if (now - lastReportAt < REPORT_MS) return;
+      lastReported = rounded;
+      lastReportAt = now;
+      onLodChange(visibleAtLevel(tiers, current), tiers.length);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [onLodChange]);
 
   /**
    * Custom raycaster for pin hover. Layer-isolated so we don't compete with

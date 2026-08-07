@@ -117,16 +117,7 @@ const SearchBox: React.FC<Props> = ({
   };
 
   return (
-    <div
-      className={`absolute z-20 pointer-events-auto ${
-        isMobile ? 'left-3 right-3' : 'top-6 left-1/2 -translate-x-1/2'
-      }`}
-      style={{
-        ...(isMobile
-          ? { top: 'calc(env(safe-area-inset-top) + 56px)' }
-          : { width: 380 }),
-      }}
-    >
+    <div className="relative w-full pointer-events-auto">
       <div
         className={`flex items-center gap-2 bg-[#0c0c0e]/90 backdrop-blur-md border border-white/15 rounded-full ${
           isMobile ? 'px-4 py-2.5' : 'px-3 py-1.5'

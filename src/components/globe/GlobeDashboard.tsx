@@ -11,6 +11,7 @@ import FpsCounter from './FpsCounter';
 import CountryPanel from './CountryPanel';
 import FilterHUD from './FilterHUD';
 import { isApproximate } from './precision';
+import { HUD_ACCENT, HUD_CHIP, HUD_MONO } from './hud';
 import SearchBox from './SearchBox';
 import NearestPanel from './NearestPanel';
 import HyperscalerStats from './HyperscalerStats';
@@ -51,6 +52,9 @@ const GlobeDashboard: React.FC = () => {
   // of them share one coordinate and would read as a hotspot that isn't there.
   const [showApproximate, setShowApproximate] = useState(false);
   const [powerPlants, setPowerPlants] = useState<PowerPlant[] | null>(null);
+  // How many pins the current zoom level actually reveals — reported by the
+  // globe's LOD loop so the legend can explain why the map looks sparse.
+  const [lodVisible, setLodVisible] = useState(0);
   // When something in search / nearest panel sets a "pending" datacenter,
   // the CountryPanel auto-selects it after the country view opens.
   const [pendingSelectDc, setPendingSelectDc] = useState<Datacenter | null>(null);
@@ -60,6 +64,19 @@ const GlobeDashboard: React.FC = () => {
   const globeInstanceRef = useRef<any>(null);
   // Default camera POV — used to restore the globe view when leaving a country.
   const defaultPovRef = useRef<{ lat: number; lng: number; altitude: number } | null>(null);
+
+  const toggleCloud = useCallback((c: CloudProvider) => {
+    setShownClouds((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+      return next;
+    });
+  }, []);
+
+  // Stable identity: the globe's LOD effect depends on this callback, and a
+  // fresh closure each render would restart the animation loop every frame.
+  const handleLodChange = useCallback((visible: number) => setLodVisible(visible), []);
 
   const ZOOM_IN_MS = 900;
   const ZOOM_OUT_MS = 700;
@@ -227,122 +244,197 @@ const GlobeDashboard: React.FC = () => {
         onGlobeReady={(g) => {
           globeInstanceRef.current = g;
         }}
+        onLodChange={handleLodChange}
       />
 
-      {/* HUD header — compact single-line on mobile, sits above safe-area */}
+      {/*
+        One overlay owns every floating panel. Panels are placed into four
+        rails — two across the top, two across the bottom — instead of each
+        component absolutely positioning itself, which is what previously let
+        the hyperscaler card land on top of the legend and the FPS chip land
+        under the Layers button. Flex gaps guarantee the separation now.
+        The overlay ignores pointer events; each panel opts back in.
+      */}
       <div
-        className={`absolute top-0 left-0 w-full pointer-events-none flex justify-between items-start z-10 ${
-          isMobile ? 'px-3' : 'p-6'
+        className={`absolute inset-0 z-20 pointer-events-none flex flex-col ${
+          isMobile ? 'px-3 pb-3' : 'p-6'
         }`}
-        style={isMobile ? { paddingTop: 'calc(env(safe-area-inset-top) + 8px)' } : undefined}
+        style={
+          isMobile
+            ? {
+                paddingTop: 'calc(env(safe-area-inset-top) + 8px)',
+                paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)',
+              }
+            : undefined
+        }
       >
-        <div className={isMobile ? 'flex items-center gap-2' : ''}>
-          <h1
-            className={`${isMobile ? 'text-[15px]' : 'text-3xl'} font-thin tracking-tighter text-white drop-shadow-lg`}
-            style={{ fontFamily: 'Space Grotesk, sans-serif' }}
+        {/* ── Top rails ─────────────────────────────────────────────────── */}
+        <div className={`flex items-start gap-4 ${isMobile ? 'flex-col' : 'justify-between'}`}>
+          {/* Top-left: identity + live counts + geolocation */}
+          <div
+            className={`flex ${isMobile ? 'flex-row items-center gap-2' : 'flex-col items-start gap-2'}`}
           >
-            {!isMobile && 'GLOBAL '}
-            <span className="font-bold" style={{ color: '#ff9f43' }}>DATACENTERS</span>
-          </h1>
-          {!isMobile && (
-            <div
-              className="flex items-center gap-1.5 mt-2 text-xs px-3 py-1 text-gray-400 bg-[#0c0c0e]/60 rounded-full backdrop-blur-sm border border-white/10 w-fit pointer-events-auto"
-              style={{ fontFamily: 'JetBrains Mono, monospace' }}
+            <h1
+              className={`${
+                isMobile ? 'text-[15px]' : 'text-3xl'
+              } font-thin tracking-tighter text-white drop-shadow-lg`}
+              style={{ fontFamily: 'Space Grotesk, sans-serif' }}
             >
-              <Activity size={12} className="animate-pulse" style={{ color: '#ff4d4d' }} />
-              <span>
-                {loading
-                  ? 'INITIALIZING DATA…'
-                  : `${totalSites.toLocaleString()} SITES · ${totalCountries} COUNTRIES`}
+              {!isMobile && 'GLOBAL '}
+              <span className="font-bold" style={{ color: HUD_ACCENT }}>
+                DATACENTERS
               </span>
+            </h1>
+            {!isMobile && (
+              <div
+                className={`flex items-center gap-1.5 text-xs px-3 py-1 text-gray-400 w-fit pointer-events-auto ${HUD_CHIP}`}
+                style={{ fontFamily: HUD_MONO }}
+              >
+                <Activity size={12} className="animate-pulse" style={{ color: '#ff4d4d' }} />
+                <span>
+                  {loading
+                    ? 'INITIALIZING DATA…'
+                    : `${totalSites.toLocaleString()} SITES · ${totalCountries} COUNTRIES`}
+                </span>
+              </div>
+            )}
+            {isMobile && !loading && (
+              <span
+                className="text-[10px] text-white/55 tabular-nums"
+                style={{ fontFamily: HUD_MONO }}
+              >
+                {totalSites.toLocaleString()} · {totalCountries}
+              </span>
+            )}
+            {/* Desktop only — on mobile this chip lives in the bottom rail so
+                it never sits under the search dropdown. */}
+            {!isMobile && !loading && !selectedCountry && (
+              <NearestPanel
+                datacenters={datacenters}
+                isMobile={isMobile}
+                onSelectCountry={handleCountryClick}
+                onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
+              />
+            )}
+          </div>
+
+          {/* Top-centre: search. Capped so it can never grow into either rail. */}
+          {!loading && !selectedCountry && (
+            <div
+              className={isMobile ? 'w-full' : 'flex-1 min-w-0 max-w-[380px] mt-1'}
+              style={isMobile ? undefined : { marginLeft: 'auto', marginRight: 'auto' }}
+            >
+              <SearchBox
+                datacenters={datacenters}
+                isMobile={isMobile}
+                onSelectCountry={handleCountryClick}
+                onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
+              />
             </div>
           )}
-          {isMobile && !loading && (
-            <span
-              className="text-[10px] text-white/55 tabular-nums"
-              style={{ fontFamily: 'JetBrains Mono, monospace' }}
-            >
-              {totalSites.toLocaleString()} · {totalCountries}
-            </span>
+
+          {/* Top-right: perf readout above the layer controls */}
+          {!isMobile && (
+            <div className="flex flex-col items-end gap-2">
+              <div className="pointer-events-auto">
+                <FpsCounter />
+              </div>
+              {!loading && !selectedCountry && (
+                <FilterHUD
+                  isMobile={isMobile}
+                  showCables={showCables}
+                  onToggleCables={() => setShowCables((v) => !v)}
+                  showPlants={showPlants}
+                  onTogglePlants={() => setShowPlants((v) => !v)}
+                  showApproximate={showApproximate}
+                  onToggleApproximate={() => setShowApproximate((v) => !v)}
+                  approximateCount={datacenters.length - preciseSites}
+                  shownClouds={shownClouds}
+                  onToggleCloud={toggleCloud}
+                  hyperscalerFilter={hyperscalerFilter}
+                  onSetHyperscaler={setHyperscalerFilter}
+                  visibleCount={visibleDatacenters.length}
+                  totalCount={datacenters.length}
+                />
+              )}
+            </div>
           )}
         </div>
 
-        {!isMobile && (
-          <div className="pointer-events-auto">
-            <FpsCounter />
-          </div>
-        )}
-      </div>
+        {/* Elastic gap — keeps the bottom rails pinned to the bottom edge. */}
+        <div className="flex-1 min-h-0" />
 
-      {/* Legend hidden on mobile — too crowded. Stats shown in header instead. */}
-      {!isMobile && <Legend totalSites={totalSites} totalCountries={totalCountries} preciseSites={preciseSites} />}
-
-      {/* Search box (top-center) and "Closest to me" (top-left) */}
-      {!loading && !selectedCountry && (
-        <>
-          <SearchBox
-            datacenters={datacenters}
-            isMobile={isMobile}
-            onSelectCountry={handleCountryClick}
-            onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
-          />
-          <NearestPanel
-            datacenters={datacenters}
-            isMobile={isMobile}
-            onSelectCountry={handleCountryClick}
-            onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
-          />
-        </>
-      )}
-
-      {/* Filter HUD — toggleable layers + hyperscaler filter */}
-      {!loading && !selectedCountry && (
-        <FilterHUD
-          isMobile={isMobile}
-          showCables={showCables}
-          onToggleCables={() => setShowCables((v) => !v)}
-          showPlants={showPlants}
-          onTogglePlants={() => setShowPlants((v) => !v)}
-          showApproximate={showApproximate}
-          onToggleApproximate={() => setShowApproximate((v) => !v)}
-          approximateCount={datacenters.length - preciseSites}
-          shownClouds={shownClouds}
-          onToggleCloud={(c) =>
-            setShownClouds((prev) => {
-              const next = new Set(prev);
-              if (next.has(c)) next.delete(c);
-              else next.add(c);
-              return next;
-            })
-          }
-          hyperscalerFilter={hyperscalerFilter}
-          onSetHyperscaler={setHyperscalerFilter}
-          visibleCount={visibleDatacenters.length}
-          totalCount={datacenters.length}
-        />
-      )}
-
-      {/* Hyperscaler stats card — appears when a hyperscaler filter is active */}
-      {!loading && !selectedCountry && hyperscalerFilter && (
-        <HyperscalerStats
-          hyperscaler={hyperscalerFilter}
-          datacenters={visibleDatacenters}
-          isMobile={isMobile}
-        />
-      )}
-
-      {!isMobile && (
+        {/* ── Bottom rails ──────────────────────────────────────────────── */}
         <div
-          className="absolute bottom-6 right-6 z-10 flex flex-col items-end gap-1 text-xs text-white/30 tracking-widest pointer-events-none select-none uppercase"
-          style={{ fontFamily: 'JetBrains Mono, monospace' }}
+          className={`flex gap-4 ${isMobile ? 'flex-col' : 'items-end justify-between'}`}
         >
-          <span>Data centers © Ringmast4r / Global-Data-Center-Map</span>
-          <span>Geocoding © GeoNames (CC BY 4.0)</span>
-          <span>DC Intelligence</span>
-        </div>
-      )}
+          {/* Bottom-left: filter context stacked above the legend. Both are
+              in one column, so the stats card pushes the legend up rather
+              than covering it. */}
+          <div
+            className={`flex flex-col gap-3 ${
+              isMobile ? 'w-full' : 'items-start max-h-[70vh] overflow-hidden'
+            }`}
+          >
+            {!loading && !selectedCountry && hyperscalerFilter && (
+              <HyperscalerStats
+                hyperscaler={hyperscalerFilter}
+                datacenters={visibleDatacenters}
+                isMobile={isMobile}
+              />
+            )}
+            {!isMobile && (
+              <Legend
+                totalSites={totalSites}
+                totalCountries={totalCountries}
+                preciseSites={preciseSites}
+                visibleAtZoom={lodVisible}
+                pinTotal={visibleDatacenters.length}
+              />
+            )}
+          </div>
 
-      {/* Mobile bottom hint removed — bottom area now occupied by Near me + Layers chips */}
+          {/* Bottom-right: attribution (desktop) / the two action chips (mobile) */}
+          {isMobile ? (
+            !loading &&
+            !selectedCountry && (
+              <div className="flex items-center justify-between gap-3 w-full">
+                <NearestPanel
+                  datacenters={datacenters}
+                  isMobile={isMobile}
+                  onSelectCountry={handleCountryClick}
+                  onSelectDatacenter={(dc) => setPendingSelectDc(dc)}
+                />
+                <FilterHUD
+                  isMobile={isMobile}
+                  showCables={showCables}
+                  onToggleCables={() => setShowCables((v) => !v)}
+                  showPlants={showPlants}
+                  onTogglePlants={() => setShowPlants((v) => !v)}
+                  showApproximate={showApproximate}
+                  onToggleApproximate={() => setShowApproximate((v) => !v)}
+                  approximateCount={datacenters.length - preciseSites}
+                  shownClouds={shownClouds}
+                  onToggleCloud={toggleCloud}
+                  hyperscalerFilter={hyperscalerFilter}
+                  onSetHyperscaler={setHyperscalerFilter}
+                  visibleCount={visibleDatacenters.length}
+                  totalCount={datacenters.length}
+                />
+              </div>
+            )
+          ) : (
+            <div
+              className="flex flex-col items-end gap-1 text-[11px] text-white/30 tracking-widest select-none uppercase"
+              style={{ fontFamily: HUD_MONO }}
+            >
+              <span>Data centers © Ringmast4r / Global-Data-Center-Map</span>
+              <span>Geocoding © GeoNames (CC BY 4.0)</span>
+              <span>DC Intelligence</span>
+            </div>
+          )}
+        </div>
+      </div>
 
       <AnimatePresence>
         {selectedCountry && !tourDc && (

@@ -3,6 +3,7 @@
 import React, { useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Building2, Globe2, Zap } from 'lucide-react';
+import { HUD_MONO } from './hud';
 import { HYPERSCALER_COLORS, type Hyperscaler } from './hyperscalers';
 import type { Datacenter } from './types';
 
@@ -45,15 +46,13 @@ const HyperscalerStats: React.FC<Props> = ({ hyperscaler, datacenters, isMobile 
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
       transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-      className={`absolute z-20 pointer-events-auto bg-[#0c0c0e]/92 backdrop-blur-xl border rounded-xl shadow-2xl ${
-        isMobile ? 'left-3 right-3 px-4 py-3' : 'left-6 bottom-6 px-5 py-4'
+      className={`pointer-events-auto bg-[#0c0c0e]/92 backdrop-blur-xl border rounded-xl shadow-2xl shadow-black/50 ${
+        isMobile ? 'w-full px-4 py-3' : 'px-5 py-4'
       }`}
       style={{
         borderColor: `${color}40`,
         width: isMobile ? undefined : 280,
-        // On mobile, sit ABOVE the bottom chips (chips are ~12px from safe-area + ~42px tall = ~64px reserved)
-        bottom: isMobile ? 'calc(env(safe-area-inset-bottom) + 70px)' : undefined,
-        fontFamily: 'JetBrains Mono, monospace',
+        fontFamily: HUD_MONO,
       }}
     >
       <div
