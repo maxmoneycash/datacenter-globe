@@ -146,13 +146,36 @@ describe('assignLodTiers', () => {
   });
 
   test('tolerates coordinates at the extremes of the range', () => {
-    // Longitude exactly +180 must not index past the end of the grid row.
     const rows = [
       dc({ name: 'ne', city_coords: [90, 180] }),
       dc({ name: 'sw', city_coords: [-90, -180] }),
     ];
     const tiers = assignLodTiers(rows);
     for (const t of tiers) assert.ok(t >= 0 && t <= MAX_TIER);
+  });
+
+  test('a point at +180 does not collide with the next grid row', () => {
+    // Unclamped, floor((180+180)/8) == 45 == the column count, so the cell
+    // index wraps onto row+1 column 0 and evicts a facility 8 degrees north
+    // at the antimeridian. Both of these are isolated and must both survive
+    // at world zoom.
+    const rows = [
+      dc({ name: 'antimeridian', city_coords: [0, 180] }),
+      dc({ name: 'north-of-it', city_coords: [8, -180] }),
+    ];
+    const tiers = assignLodTiers(rows);
+    assert.equal(tiers[0], 0, 'antimeridian site lost its tier-0 slot');
+    assert.equal(tiers[1], 0, 'neighbour lost its tier-0 slot to a wrapped index');
+  });
+
+  test('the north pole does not collide with the next grid row', () => {
+    const rows = [
+      dc({ name: 'pole', city_coords: [90, 0] }),
+      dc({ name: 'elsewhere', city_coords: [-90, 8] }),
+    ];
+    const tiers = assignLodTiers(rows);
+    assert.equal(tiers[0], 0);
+    assert.equal(tiers[1], 0);
   });
 });
 

@@ -86,6 +86,7 @@ export function assignLodTiers(datacenters: Datacenter[]): Uint8Array {
   for (let tier = 0; tier < MAX_TIER; tier++) {
     const cellDeg = BASE_CELL_DEG / 2 ** tier;
     const cols = Math.ceil(360 / cellDeg);
+    const rows = Math.ceil(180 / cellDeg);
     const occupied = new Set<number>();
 
     for (const { i } of order) {
@@ -93,8 +94,11 @@ export function assignLodTiers(datacenters: Datacenter[]): Uint8Array {
       const coords = datacenters[i].city_coords;
       if (!coords) continue;
       const [lat, lng] = coords;
-      const row = Math.floor((lat + 90) / cellDeg);
-      const col = Math.floor((lng + 180) / cellDeg);
+      // Clamped: a point at exactly +90/+180 lands one cell past the end of
+      // its axis, and the resulting index collides with the first cell of the
+      // next row — two far-apart facilities would contend for one slot.
+      const row = Math.min(Math.floor((lat + 90) / cellDeg), rows - 1);
+      const col = Math.min(Math.floor((lng + 180) / cellDeg), cols - 1);
       const cell = row * cols + col;
       if (occupied.has(cell)) continue;
       occupied.add(cell);
