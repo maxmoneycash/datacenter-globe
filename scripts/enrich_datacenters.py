@@ -32,7 +32,7 @@ import re
 import sys
 import urllib.request
 import zipfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, ".cache", "gazetteer")
@@ -104,8 +104,46 @@ COUNTRY_ALIASES = {
     "curacao": "CW", "reunion": "RE", "netherlands antilles": "AN",
     "south africa": "ZA", "new zealand": "NZ", "saudi arabia": "SA",
     "puerto rico": "PR", "dominican republic": "DO", "costa rica": "CR",
+    # Non-English spellings that appear in the upstream country field
+    "republica dominicana": "DO", "chipre": "CY", "brasil": "BR",
+    "espana": "ES", "espanha": "ES", "deutschland": "DE", "italia": "IT",
+    "belgie": "BE", "belgique": "BE", "nederland": "NL", "osterreich": "AT",
+    "suisse": "CH", "schweiz": "CH", "svizzera": "CH", "polska": "PL",
+    "mexico": "MX", "peru": "PE", "japon": "JP", "grecia": "GR",
+    "sudafrica": "ZA", "la reunion": "RE", "irlanda": "IE", "suecia": "SE",
     "el salvador": "SV", "trinidad and tobago": "TT", "sri lanka": "LK",
 }
+
+
+def resolve_iso2(rec, iso: dict[str, str]) -> str:
+    """
+    Best-effort ISO2 for a record whose `country` field may be unusable.
+
+    Upstream's country column is free text, and a slice of it holds postal
+    codes, street lines or localised names. Every geocoding step below is
+    gated on knowing the country, so a junk value here does not just mislabel
+    a row — it stops that row being placed on the map at all. Hence the
+    fallbacks: strip a trailing postcode, then walk the address tail.
+    """
+    raw = rec.get("country") or ""
+    hit = iso.get(norm(raw))
+    if hit:
+        return hit
+
+    # "Taiwan 220" / "Singapore 609934" — a country with a postcode glued on.
+    stripped = re.sub(r"[\s,]*\d[\d\s-]*$", "", raw).strip()
+    hit = iso.get(norm(stripped))
+    if hit:
+        return hit
+
+    # Fall back to the address tail: the last comma-separated parts are
+    # nearly always "<city>, <region>, <country>".
+    for tok in reversed(address_tokens(rec.get("address") or "")[-3:]):
+        tok = re.sub(r"[\s,]*\d[\d\s-]*$", "", tok).strip()
+        hit = iso.get(norm(tok))
+        if hit:
+            return hit
+    return ""
 
 
 def build_country_index(country_info: str) -> dict[str, str]:
@@ -277,6 +315,73 @@ def city_candidates(tokens: list[str]) -> list[str]:
 
 
 # --------------------------------------------------------------------------
+# country repair
+# --------------------------------------------------------------------------
+
+def load_country_polygons(path: str):
+    """
+    Natural Earth borders as (name, bbox, polygons) for point-in-polygon tests.
+
+    Deliberately the same file the globe renders, so a repaired country name is
+    guaranteed to match a polygon the map can actually colour in.
+    """
+    with open(path, encoding="utf-8") as fh:
+        gj = json.load(fh)
+
+    out = []
+    for feat in gj.get("features", []):
+        props = feat.get("properties") or {}
+        name = props.get("ADMIN") or props.get("NAME") or props.get("admin")
+        geom = feat.get("geometry") or {}
+        if not name or not geom:
+            continue
+        if geom["type"] == "Polygon":
+            polys = [geom["coordinates"]]
+        elif geom["type"] == "MultiPolygon":
+            polys = geom["coordinates"]
+        else:
+            continue
+
+        min_x = min_y = 1e9
+        max_x = max_y = -1e9
+        for poly in polys:
+            for x, y in poly[0]:
+                min_x, max_x = min(min_x, x), max(max_x, x)
+                min_y, max_y = min(min_y, y), max(max_y, y)
+        out.append((name, (min_x, min_y, max_x, max_y), polys))
+    return out
+
+
+def _in_ring(x: float, y: float, ring) -> bool:
+    """Standard ray-casting crossing count."""
+    inside = False
+    n = len(ring)
+    j = n - 1
+    for i in range(n):
+        xi, yi = ring[i][0], ring[i][1]
+        xj, yj = ring[j][0], ring[j][1]
+        if (yi > y) != (yj > y):
+            denom = yj - yi
+            if denom and x < (xj - xi) * (y - yi) / denom + xi:
+                inside = not inside
+        j = i
+    return inside
+
+
+def country_at(lat: float, lon: float, polygons) -> str:
+    """Country whose border contains this point, or '' if none does."""
+    for name, (min_x, min_y, max_x, max_y), polys in polygons:
+        if not (min_x <= lon <= max_x and min_y <= lat <= max_y):
+            continue
+        for poly in polys:
+            if _in_ring(lon, lat, poly[0]):
+                # Subtract holes (lakes, enclaves)
+                if not any(_in_ring(lon, lat, hole) for hole in poly[1:]):
+                    return name
+    return ""
+
+
+# --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
 
@@ -366,7 +471,7 @@ def main() -> int:
     for r in facilities:
         rec = dict(r)
         country = r.get("country") or ""
-        iso2 = iso.get(norm(country), "")
+        iso2 = resolve_iso2(r, iso)
         coords = None
         precision = None
         derived = True
@@ -446,6 +551,62 @@ def main() -> int:
             stats[precision] += 1
 
         out.append(rec)
+
+    # ---------------------------------------------------------------
+    # Repair the country field.
+    #
+    # Upstream's `country` is free text and a chunk of it is not a country at
+    # all — postal codes ("111024"), street lines ("Улица Уборевича 8"),
+    # city+postcode ("Taiwan 507"), or a non-English name ("Chipre",
+    # "República Dominicana"). That is why the raw data reports 344 countries.
+    # The globe keys its choropleth and its per-country stats off this string,
+    # so every bad value is a phantom country in the UI.
+    #
+    # Rows whose country already resolves to a real ISO code are left alone.
+    # The rest are relabelled from the Natural Earth polygon containing the
+    # coordinate we just resolved — the same file the globe draws, so a
+    # repaired name always matches a polygon that can be coloured in.
+    # ---------------------------------------------------------------
+    # Canonical display name per ISO2, voted for by the rows that already
+    # carry a clean country string. Those names are what the globe's polygon
+    # matcher already agrees with, so reusing them keeps repaired rows
+    # clickable rather than inventing a spelling nothing matches.
+    name_votes: dict[str, Counter] = defaultdict(Counter)
+    for rec in out:
+        code = iso.get(norm(rec.get("country")))
+        if code:
+            name_votes[code][rec["country"]] += 1
+    iso2_name = {code: votes.most_common(1)[0][0] for code, votes in name_votes.items()}
+
+    borders = os.path.join(ROOT, "public", "countries-110m.geojson")
+    polygons = load_country_polygons(borders) if os.path.exists(borders) else []
+
+    by_code = by_polygon = unrepairable = 0
+    for rec in out:
+        # 1. Canonicalise against the resolved country code. This runs for
+        #    every row, not just unrecognisable ones: "Svizzera", "Polska" and
+        #    "Taiwán" all resolve to a valid code while still being a distinct
+        #    string to the map, which is how one country becomes three
+        #    entries in the country list.
+        code = resolve_iso2(rec, iso)
+        canonical = iso2_name.get(code)
+        if canonical:
+            if rec.get("country") != canonical:
+                rec["country"] = canonical
+                by_code += 1
+            continue
+
+        # 2. Otherwise ask the borders themselves what is under the pin.
+        c = as_coords(rec.get("city_coords"))
+        name = country_at(c[0], c[1], polygons) if c and polygons else ""
+        if name:
+            rec["country"] = name
+            by_polygon += 1
+        else:
+            unrepairable += 1
+
+    print(f"\n  country field: {by_code} repaired by code, "
+          f"{by_polygon} by borders, {unrepairable} still unusable")
 
     total = len(out)
     located = total - stats["unresolved"]

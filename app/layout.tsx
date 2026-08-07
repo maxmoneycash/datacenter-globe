@@ -5,7 +5,18 @@ import './globals.css';
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] });
 const geistMono = Geist_Mono({ variable: '--font-geist-mono', subsets: ['latin'] });
 
+// Absolute base for OG/Twitter image URLs. Without it Next falls back to
+// localhost:3000 at build time and social cards resolve to a dead host.
+// Vercel injects VERCEL_PROJECT_PRODUCTION_URL on every deploy; NEXT_PUBLIC_SITE_URL
+// overrides it for self-hosting or a custom domain.
+const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : 'https://datacenter-globe.vercel.app');
+
 export const metadata: Metadata = {
+  metadataBase: new URL(siteUrl),
   title: 'Datacenter Globe — 3D Datacenter Map',
   description:
     'Interactive 3D atlas of ~18,000 datacenters, public-cloud regions, and the global submarine cable network. Click a country to explore; click a site for a virtual tour.',
@@ -13,7 +24,7 @@ export const metadata: Metadata = {
     title: 'Datacenter Globe',
     description:
       'Interactive 3D atlas of ~18,000 datacenters, public-cloud regions, and the global submarine cable network.',
-    url: 'https://datacenter-globe.vercel.app',
+    url: siteUrl,
     siteName: 'Datacenter Globe',
     images: [{ url: '/og.png', width: 1440, height: 900, alt: 'Datacenter Globe' }],
     type: 'website',

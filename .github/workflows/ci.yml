@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # Non-blocking: the repo carries ~51 pre-existing lint problems (mostly
+      # react-hooks/set-state-in-effect in the globe components). The step
+      # reports them so the number is visible and can be driven down, but it
+      # does not gate merges until that backlog is cleared. Flip this to
+      # blocking once `npx eslint` exits clean.
+      - name: Lint (non-blocking)
+        run: npx eslint
+        continue-on-error: true
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate datacenter dataset
+        run: node scripts/validate-dataset.mjs
