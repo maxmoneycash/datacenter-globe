@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Layers, Cable, Cloud, Building2, X, Zap } from 'lucide-react';
+import { Layers, Cable, Cloud, Building2, X, Zap, MapPin } from 'lucide-react';
 import { CLOUD_COLORS, type CloudProvider } from './cloudRegions';
 import { HYPERSCALER_COLORS, HYPERSCALER_LIST, type Hyperscaler } from './hyperscalers';
 
@@ -12,6 +12,9 @@ interface Props {
   onToggleCables: () => void;
   showPlants: boolean;
   onTogglePlants: () => void;
+  showApproximate: boolean;
+  onToggleApproximate: () => void;
+  approximateCount: number;
   shownClouds: Set<CloudProvider>;
   onToggleCloud: (c: CloudProvider) => void;
   hyperscalerFilter: Exclude<Hyperscaler, null> | null;
@@ -28,6 +31,9 @@ const FilterHUD: React.FC<Props> = ({
   onToggleCables,
   showPlants,
   onTogglePlants,
+  showApproximate,
+  onToggleApproximate,
+  approximateCount,
   shownClouds,
   onToggleCloud,
   hyperscalerFilter,
@@ -43,7 +49,11 @@ const FilterHUD: React.FC<Props> = ({
     return () => clearTimeout(t);
   }, []);
   const activeCount =
-    (showCables ? 1 : 0) + (showPlants ? 1 : 0) + shownClouds.size + (hyperscalerFilter ? 1 : 0);
+    (showCables ? 1 : 0) +
+    (showPlants ? 1 : 0) +
+    (showApproximate ? 1 : 0) +
+    shownClouds.size +
+    (hyperscalerFilter ? 1 : 0);
 
   return (
     <div
@@ -124,6 +134,25 @@ const FilterHUD: React.FC<Props> = ({
                 color="#fbbf24"
                 onClick={onTogglePlants}
               />
+            </div>
+
+            {/* Coordinate quality — off by default, see precision.ts */}
+            <div className="px-4 pt-3 pb-2 border-b border-white/5">
+              <div className="text-[9px] uppercase tracking-widest text-white/40 mb-2">
+                Location Accuracy
+              </div>
+              <Toggle
+                icon={<MapPin size={13} />}
+                label="Approximate sites"
+                count={approximateCount}
+                active={showApproximate}
+                color="#f87171"
+                onClick={onToggleApproximate}
+              />
+              <p className="mt-1 text-[9px] leading-snug text-white/35">
+                Facilities we can only place to a region or country. Real sites,
+                guessed pins — thousands share one coordinate.
+              </p>
             </div>
 
             {/* Public-cloud region overlays */}

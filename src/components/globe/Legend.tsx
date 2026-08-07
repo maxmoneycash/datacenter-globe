@@ -3,9 +3,10 @@ import React from 'react';
 interface Props {
   totalSites: number;
   totalCountries: number;
+  preciseSites: number;
 }
 
-const Legend: React.FC<Props> = ({ totalSites, totalCountries }) => {
+const Legend: React.FC<Props> = ({ totalSites, totalCountries, preciseSites }) => {
   return (
     <div className="absolute bottom-8 left-8 z-10 p-4 bg-[#0c0c0e]/75 backdrop-blur-md border border-white/10 rounded-lg text-xs font-mono select-none pointer-events-none">
       <h3 className="mb-2 text-gray-400 font-bold uppercase tracking-widest">Datacenter Density</h3>
@@ -33,10 +34,35 @@ const Legend: React.FC<Props> = ({ totalSites, totalCountries }) => {
       </div>
 
       <div className="mt-4 pt-4 border-t border-white/10">
-        <h3 className="mb-1 text-gray-400 font-bold uppercase tracking-widest">Data Source</h3>
-        <p className="text-gray-500">Ringmast4r / Global-Data-Center-Map</p>
+        <h3 className="mb-1 text-gray-400 font-bold uppercase tracking-widest">Data Sources</h3>
+        <p className="text-gray-500">
+          Data centers ©{' '}
+          <a
+            href="https://github.com/Ringmast4r/Global-Data-Center-Map"
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-white/20 hover:text-gray-300"
+          >
+            Ringmast4r / Global-Data-Center-Map
+          </a>
+        </p>
+        <p className="text-gray-500">
+          Geocoding{' '}
+          <a
+            href="https://www.geonames.org/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-white/20 hover:text-gray-300"
+          >
+            GeoNames
+          </a>{' '}
+          (CC BY 4.0)
+        </p>
         <p className="text-gray-500 mt-1">
           {totalSites.toLocaleString()} sites · {totalCountries} countries
+        </p>
+        <p className="text-gray-500">
+          {preciseSites.toLocaleString()} mapped to city accuracy or better
         </p>
       </div>
     </div>

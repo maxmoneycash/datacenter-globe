@@ -1,3 +1,5 @@
+import type { Precision } from './precision';
+
 export interface Datacenter {
   name: string;
   company: string;
@@ -8,6 +10,11 @@ export interface Datacenter {
   country: string;
   address?: string;
   city_coords?: [number, number]; // [lat, lng]
+  // How the coordinate above was arrived at — see precision.ts
+  precision?: Precision;
+  // True when the coordinate was resolved by our geocoder rather than
+  // supplied by a source. Regenerated from scratch on every enrichment run.
+  derived?: boolean;
   // Richer fields (present on DataNorge-sourced entries)
   mw_current?: number | null;
   mw_planned_max?: number | null;

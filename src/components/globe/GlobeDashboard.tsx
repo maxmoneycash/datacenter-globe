@@ -10,6 +10,7 @@ import Legend from './Legend';
 import FpsCounter from './FpsCounter';
 import CountryPanel from './CountryPanel';
 import FilterHUD from './FilterHUD';
+import { isApproximate } from './precision';
 import SearchBox from './SearchBox';
 import NearestPanel from './NearestPanel';
 import HyperscalerStats from './HyperscalerStats';
@@ -46,6 +47,9 @@ const GlobeDashboard: React.FC = () => {
   const [hyperscalerFilter, setHyperscalerFilter] = useState<Exclude<Hyperscaler, null> | null>(null);
   const [cables, setCables] = useState<any>(null);
   const [showPlants, setShowPlants] = useState(false);
+  // Region/country-centroid facilities are hidden until asked for — thousands
+  // of them share one coordinate and would read as a hotspot that isn't there.
+  const [showApproximate, setShowApproximate] = useState(false);
   const [powerPlants, setPowerPlants] = useState<PowerPlant[] | null>(null);
   // When something in search / nearest panel sets a "pending" datacenter,
   // the CountryPanel auto-selects it after the country view opens.
@@ -116,9 +120,17 @@ const GlobeDashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    // Borders are vendored locally rather than pulled from a third-party CDN,
+    // and a borders failure must never take the facility data down with it —
+    // the globe is still useful with points and no country fills.
     Promise.all([
       fetch('/datacenters.json').then((r) => r.json()),
-      fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson').then((r) => r.json()),
+      fetch('/countries-110m.geojson')
+        .then((r) => r.json())
+        .catch((err) => {
+          console.error('Failed to load country borders', err);
+          return { type: 'FeatureCollection', features: [] };
+        }),
     ])
       .then(([dc, geo]) => {
         // Tag each record with its hyperscaler at load time so downstream
@@ -161,11 +173,20 @@ const GlobeDashboard: React.FC = () => {
       .catch((err) => console.error('Failed to load power plants', err));
   }, [showPlants, powerPlants]);
 
-  // Apply hyperscaler filter — produces the dataset shown on the globe + map.
+  // Apply precision + hyperscaler filters — produces the dataset shown on the
+  // globe and the country map.
   const visibleDatacenters = useMemo(() => {
-    if (!hyperscalerFilter) return datacenters;
-    return datacenters.filter((d) => d.hyperscaler === hyperscalerFilter);
-  }, [datacenters, hyperscalerFilter]);
+    let out = datacenters;
+    if (!showApproximate) out = out.filter((d) => !isApproximate(d.precision));
+    if (hyperscalerFilter) out = out.filter((d) => d.hyperscaler === hyperscalerFilter);
+    return out;
+  }, [datacenters, hyperscalerFilter, showApproximate]);
+
+  // How many facilities we can place accurately, regardless of other filters.
+  const preciseSites = useMemo(
+    () => datacenters.filter((d) => !isApproximate(d.precision)).length,
+    [datacenters]
+  );
 
   const countryStats = useMemo<Map<string, CountryStat>>(() => {
     const byCountry = new Map<string, Datacenter[]>();
@@ -254,7 +275,7 @@ const GlobeDashboard: React.FC = () => {
       </div>
 
       {/* Legend hidden on mobile — too crowded. Stats shown in header instead. */}
-      {!isMobile && <Legend totalSites={totalSites} totalCountries={totalCountries} />}
+      {!isMobile && <Legend totalSites={totalSites} totalCountries={totalCountries} preciseSites={preciseSites} />}
 
       {/* Search box (top-center) and "Closest to me" (top-left) */}
       {!loading && !selectedCountry && (
@@ -282,6 +303,9 @@ const GlobeDashboard: React.FC = () => {
           onToggleCables={() => setShowCables((v) => !v)}
           showPlants={showPlants}
           onTogglePlants={() => setShowPlants((v) => !v)}
+          showApproximate={showApproximate}
+          onToggleApproximate={() => setShowApproximate((v) => !v)}
+          approximateCount={datacenters.length - preciseSites}
           shownClouds={shownClouds}
           onToggleCloud={(c) =>
             setShownClouds((prev) => {
@@ -312,7 +336,8 @@ const GlobeDashboard: React.FC = () => {
           className="absolute bottom-6 right-6 z-10 flex flex-col items-end gap-1 text-xs text-white/30 tracking-widest pointer-events-none select-none uppercase"
           style={{ fontFamily: 'JetBrains Mono, monospace' }}
         >
-          <span>Data Source: Ringmast4r / Global-Data-Center-Map</span>
+          <span>Data centers © Ringmast4r / Global-Data-Center-Map</span>
+          <span>Geocoding © GeoNames (CC BY 4.0)</span>
           <span>DC Intelligence</span>
         </div>
       )}

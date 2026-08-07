@@ -2,6 +2,7 @@ import React, { useMemo, useState, useCallback, memo, useEffect, useRef } from '
 import { X, MapPin, Building2, Box, Zap, ExternalLink, Eye } from 'lucide-react';
 import { geoArea } from 'd3-geo';
 import { motion, AnimatePresence } from 'framer-motion';
+import { PRECISION_COLOR, PRECISION_DETAIL, PRECISION_LABEL, isApproximate } from './precision';
 import type { Datacenter, CountryStat } from './types';
 import { normalizeCountry } from './constants';
 import { useIsMobile } from './useIsMobile';
@@ -557,8 +558,29 @@ const CountryPanel: React.FC<Props> = ({
                   </div>
                   <div className="text-white/50">{selectedDc.country}</div>
                   {selectedDc.city_coords && (
-                    <div className="text-white/40 text-[10px] mt-1 tabular-nums">
-                      {selectedDc.city_coords[0].toFixed(4)}°, {selectedDc.city_coords[1].toFixed(4)}°
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-white/40 text-[10px] tabular-nums">
+                        {selectedDc.city_coords[0].toFixed(4)}°,{' '}
+                        {selectedDc.city_coords[1].toFixed(4)}°
+                      </span>
+                      {selectedDc.precision && (
+                        <span
+                          title={PRECISION_DETAIL[selectedDc.precision]}
+                          className="inline-flex items-center gap-1 rounded px-1.5 py-[1px] text-[9px] uppercase tracking-widest"
+                          style={{
+                            color: PRECISION_COLOR[selectedDc.precision],
+                            border: `1px solid ${PRECISION_COLOR[selectedDc.precision]}55`,
+                            background: `${PRECISION_COLOR[selectedDc.precision]}14`,
+                          }}
+                        >
+                          {PRECISION_LABEL[selectedDc.precision]}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {selectedDc.precision && (
+                    <div className="text-white/30 text-[9px] mt-1 leading-snug">
+                      {PRECISION_DETAIL[selectedDc.precision]}
                     </div>
                   )}
                 </div>
@@ -576,6 +598,7 @@ const CountryPanel: React.FC<Props> = ({
                     <MapPin size={11} />
                     Google Maps
                   </a>
+                  {!isApproximate(selectedDc.precision) && (
                   <a
                     href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${selectedDc.city_coords[0]},${selectedDc.city_coords[1]}`}
                     target="_blank"
@@ -585,6 +608,7 @@ const CountryPanel: React.FC<Props> = ({
                     <Eye size={11} />
                     Street View
                   </a>
+                  )}
                 </div>
               )}
 

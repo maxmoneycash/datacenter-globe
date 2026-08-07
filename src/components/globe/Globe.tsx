@@ -110,7 +110,7 @@ const Globe: React.FC<GlobeProps> = ({
   }, []);
 
   useEffect(() => {
-    fetch('https://d2ad6b4ur7yvpq.cloudfront.net/naturalearth-3.3.0/ne_110m_admin_0_countries.geojson')
+    fetch('/countries-110m.geojson')
       .then((res) => res.json())
       .then((data) => setCountries(data))
       .catch((err) => console.error('Failed to load country borders', err));

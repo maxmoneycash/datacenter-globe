@@ -35,13 +35,57 @@
 
 | Layer | Source |
 |---|---|
-| Datacenter inventory | [Ringmast4r/Global-Data-Center-Map](https://github.com/Ringmast4r/Global-Data-Center-Map) |
+| Datacenter inventory | [Ringmast4r/Global-Data-Center-Map](https://github.com/Ringmast4r/Global-Data-Center-Map) (ATLAS) |
+| Geocoding gazetteer | [GeoNames](https://www.geonames.org/) — `cities1000`, US postal codes, admin1 codes (CC BY 4.0) |
 | Norway-specific metadata (MW, owner, status) | [disi910/DataNorge](https://github.com/disi910/DataNorge) |
-| Country borders | Natural Earth `ne_110m_admin_0_countries` |
+| Country borders | Natural Earth `ne_110m_admin_0_countries`, vendored to `public/countries-110m.geojson` |
 | Submarine cables | [tbotnz/submarine-cables-geojson](https://github.com/tbotnz/submarine-cables-geojson) (TeleGeography-derived) |
 | Public cloud regions | AWS / Azure / GCP region docs, hand-curated to `src/components/globe/cloudRegions.ts` |
 | 3D datacenter tour scene | forked from [kaiiiichen/datacenter-tour](https://github.com/kaiiiichen/datacenter-tour) |
 | Visual reference | [Shahnab/Global-Inequality-3D](https://github.com/Shahnab/Global-Inequality-3D) |
+
+### Attribution
+
+The ATLAS dataset is free to use **on the condition that it is credited wherever
+it is shown**. That credit is rendered in-app (legend + globe footer) and must
+stay there:
+
+```
+Data centers © Ringmast4r - Global-Data-Center-Map
+https://github.com/Ringmast4r/Global-Data-Center-Map
+```
+
+GeoNames is CC BY 4.0 and is credited in the same places.
+
+## Coordinate resolution
+
+ATLAS lists ~18,100 facilities but ships coordinates for only ~34% of them, so
+two thirds of the world's data centers never appeared on the globe. We resolve
+the rest offline and label every coordinate with the method that produced it —
+the globe never implies accuracy it does not have.
+
+```bash
+python3 scripts/enrich_datacenters.py   # rewrites public/datacenters.json
+```
+
+The script is idempotent: coordinates it derived on a previous run are marked
+`derived` and recomputed from scratch, so re-running can only improve them.
+Hand-curated rows (those with a `source_url`) are never overwritten, and rows
+we add locally are preserved — upstream only contributes facilities we lack.
+
+| `precision` | Method | Count |
+|---|---|---|
+| `site` | Hand-checked building location | 78 |
+| `postal` | US ZIP centroid (±few km) | 4,509 |
+| `city` | City centroid (±10–25 km) | 6,348 |
+| `state` | Region centroid — approximate | 102 |
+| `country` | Country centroid — approximate | 6,428 |
+| *(none)* | Unresolvable | 723 |
+
+**10,935 facilities (60%) are now placed to city accuracy or better, up from
+6,182 (34%).** `state` and `country` rows are real facilities with guessed
+pins — thousands share a single coordinate — so they are hidden behind the
+*Location Accuracy* toggle and excluded from "closest to me" distances.
 
 ## Local dev
 

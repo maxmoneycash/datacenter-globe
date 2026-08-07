@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Navigation, X, Loader2 } from 'lucide-react';
+import { isApproximate } from './precision';
 import type { Datacenter } from './types';
 
 interface Props {
@@ -60,7 +61,9 @@ const NearestPanel: React.FC<Props> = ({
   const nearest = useMemo(() => {
     if (!coords) return [];
     return datacenters
-      .filter((d) => d.city_coords)
+      // A distance measured to a country centroid is not a distance, so
+      // approximate sites are excluded from the ranking entirely.
+      .filter((d) => d.city_coords && !isApproximate(d.precision))
       .map((d) => ({
         dc: d,
         km: haversineKm(coords.lat, coords.lng, d.city_coords![0], d.city_coords![1]),
