@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22   # native TypeScript stripping for `npm test`
           cache: npm
 
       - run: npm ci
@@ -34,6 +34,9 @@ jobs:
       - name: Lint (non-blocking)
         run: npx eslint
         continue-on-error: true
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npm run build
