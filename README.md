@@ -142,9 +142,13 @@ See [DEPLOY.md](DEPLOY.md). Preflight is `npm ci && npx tsc --noEmit && npm test
 
 ## Agent skills
 
-`.claude/skills/` vendors [mattpocock/skills](https://github.com/mattpocock/skills)
-(MIT) so every session — local, remote or CI — picks them up from a fresh clone
-with no install step. See [.claude/skills/README.md](.claude/skills/README.md).
+Not vendored on `main` — [mattpocock/skills](https://github.com/mattpocock/skills)
+(MIT) is 85 files of agent tooling that has no bearing on the build, so it is
+kept off the default branch. Install it per-machine if you want it:
+
+```bash
+claude plugins install mattpocock-skills
+```
 
 ## Local dev
 
