@@ -34,7 +34,7 @@ const PIN_RAYCAST_LAYER = 1;
 const POLYGON_ALT = 0.01;
 const GLOBE_RADIUS = 100;
 const PIN_RADIUS = 101.05; // just above the polygon cap at radius 101
-const PIN_SIZE = 2.6;
+const PIN_SIZE = 3.1;
 
 function featureName(d: any): string {
   return normalizeCountry(
@@ -54,19 +54,41 @@ function polar2Cartesian(lat: number, lng: number, r: number): THREE.Vector3 {
   );
 }
 
-// Render a 📍 emoji to a canvas texture. Reused across all 5,700 pins via
-// THREE.Points (one draw call, billboarded = always faces camera).
-function makeEmojiTexture(emoji: string, size = 128): THREE.CanvasTexture {
+// Programmatic marker sprite, shared by all pins via THREE.Points (one draw
+// call, billboarded). This replaces the previous 📍 emoji texture, which had
+// two visibility problems: the glyph comes from the platform's colour-emoji
+// font, so on systems without one (much of Linux, older Android, headless CI)
+// it degraded to a faint monochrome outline — and even rendered properly, a
+// red pin sat on the choropleth's red/orange fills with almost no contrast.
+// A drawn marker is identical everywhere, and the dark ring + soft shadow
+// separate it from bright fills while the accent disc pops off dark ocean.
+function makeMarkerTexture(size = 128): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, size, size);
-  ctx.font = `${Math.floor(size * 0.82)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  // Slight Y bias so the pin's point lands close to center
-  ctx.fillText(emoji, size / 2, size * 0.55);
+  const c = size / 2;
+  // Soft dark halo so the marker detaches from bright country fills
+  const halo = ctx.createRadialGradient(c, c, size * 0.16, c, c, size * 0.5);
+  halo.addColorStop(0, 'rgba(0,0,0,0.6)');
+  halo.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, size, size);
+  // Near-black ring
+  ctx.beginPath();
+  ctx.arc(c, c, size * 0.3, 0, Math.PI * 2);
+  ctx.fillStyle = '#0c0c0e';
+  ctx.fill();
+  // Accent disc — same orange as the rest of the HUD
+  ctx.beginPath();
+  ctx.arc(c, c, size * 0.23, 0, Math.PI * 2);
+  ctx.fillStyle = '#ff9f43';
+  ctx.fill();
+  // White core so the centre reads at a distance
+  ctx.beginPath();
+  ctx.arc(c, c, size * 0.09, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
   const tex = new THREE.CanvasTexture(canvas);
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
@@ -243,7 +265,7 @@ const Globe: React.FC<GlobeProps> = ({
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('aTier', new THREE.BufferAttribute(tierAttr, 1));
 
-    const texture = makeEmojiTexture('📍');
+    const texture = makeMarkerTexture();
 
     const material = new THREE.PointsMaterial({
       map: texture,
@@ -251,7 +273,7 @@ const Globe: React.FC<GlobeProps> = ({
       transparent: true,
       // Runs before our fade, so the emoji's transparent border is still cut
       // out cleanly and only the surviving pixels get faded.
-      alphaTest: 0.1,
+      alphaTest: 0.05,
       depthTest: true,
       depthWrite: false,
       sizeAttenuation: true,
