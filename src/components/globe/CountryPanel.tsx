@@ -274,6 +274,7 @@ const CountryPanel: React.FC<Props> = ({
       >
         <CountryMap
           countryFeature={feature}
+          fitFeature={projectionFeature}
           datacenters={inCountry}
           width={isMobile ? width : width - LEFT_PANEL_WIDTH}
           height={isMobile ? mapHeight : height}

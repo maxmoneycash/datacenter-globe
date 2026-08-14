@@ -10,6 +10,19 @@ import { FUEL_COLORS, type PowerPlant } from './powerplants';
 
 interface Props {
   countryFeature: any; // GeoJSON feature for the focused country
+  /**
+   * Feature used for camera fitting and overlay bbox filters — pass the
+   * largest-polygon feature; the full feature is still drawn as the outline.
+   *
+   * Two failure modes with the full feature (both verified against the
+   * shipped borders file): Russia and Fiji cross the antimeridian, so
+   * geoBounds wraps (minLng > maxLng) — MapLibre opens the camera on the
+   * wrong side of the planet and the plants/clouds bbox test becomes a
+   * condition no longitude can satisfy. The US and France don't wrap but
+   * their far territories (Alaska/Hawaii, overseas departments) inflate the
+   * box until the mainland is a sliver of the opening view.
+   */
+  fitFeature?: any;
   datacenters: Datacenter[]; // Already filtered to this country
   width: number;
   height: number;
@@ -35,6 +48,7 @@ const COLOR_BG = '#0c0c0e';
  */
 const CountryMap: React.FC<Props> = ({
   countryFeature,
+  fitFeature,
   datacenters,
   width,
   height,
@@ -61,25 +75,59 @@ const CountryMap: React.FC<Props> = ({
 
   // Build the GeoJSON for the datacenter points. We attach the array index as
   // the feature id so we can resolve clicks back to the original Datacenter.
+  //
+  // Coincident stacks: most coordinates are city centroids, so a metro like
+  // Ashburn puts hundreds of facilities on ONE exact point. Clustering hides
+  // that at low zoom, but past clusterMaxZoom the stack used to collapse into
+  // what looked like a single pin — hundreds of sites invisible behind it,
+  // hover flickering between them, click picking one arbitrarily. Shared
+  // coordinates are therefore fanned into a deterministic phyllotaxis spiral:
+  // sub-km near the centre, ~5 km for the largest stacks — comfortably inside
+  // the ±10–25 km error bar a city centroid already carries, and each pin
+  // becomes individually hoverable and clickable.
   const pointsGeojson = useMemo<GeoJSON.FeatureCollection>(() => {
+    const stackSize = new Map<string, number>();
+    for (const d of datacenters) {
+      if (!d.city_coords) continue;
+      const k = d.city_coords.join(',');
+      stackSize.set(k, (stackSize.get(k) ?? 0) + 1);
+    }
+    const GOLDEN_ANGLE = 2.399963;
+    const placed = new Map<string, number>();
+
     return {
       type: 'FeatureCollection',
       features: datacenters
         .filter((d) => d.city_coords)
-        .map((d, i) => ({
-          type: 'Feature',
-          id: i,
-          geometry: {
-            type: 'Point',
-            coordinates: [d.city_coords![1], d.city_coords![0]], // [lng, lat]
-          },
-          properties: {
-            idx: i,
-            name: d.name,
-            company: d.company,
-            mw: d.mw_current ?? null,
-          },
-        })),
+        .map((d, i) => {
+          let [lat, lng] = d.city_coords!;
+          const k = d.city_coords!.join(',');
+          if (stackSize.get(k)! > 1) {
+            const j = placed.get(k) ?? 0;
+            placed.set(k, j + 1);
+            if (j > 0) {
+              const r = 0.0035 * Math.sqrt(j);
+              const a = j * GOLDEN_ANGLE;
+              lat += r * Math.sin(a);
+              // Widen with latitude so the fan stays circular on screen.
+              lng += (r * Math.cos(a)) / Math.max(Math.cos((lat * Math.PI) / 180), 0.2);
+            }
+          }
+          return {
+            type: 'Feature' as const,
+            id: i,
+            geometry: {
+              type: 'Point' as const,
+              coordinates: [lng, lat], // [lng, lat]
+            },
+            properties: {
+              idx: i,
+              name: d.name,
+              company: d.company,
+              mw: d.mw_current ?? null,
+            },
+          };
+        }),
     };
   }, [datacenters]);
 
@@ -92,6 +140,10 @@ const CountryMap: React.FC<Props> = ({
     // marginally less crisp than vector but works everywhere with zero config.
     const rasterStyle = {
       version: 8 as const,
+      // Required for every symbol layer: without a glyphs endpoint MapLibre
+      // refuses to draw text at all, which is why the cluster count numbers
+      // silently never appeared. Free OpenMapTiles font server, no key.
+      glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
       sources: {
         'carto-dark': {
           type: 'raster' as const,
@@ -124,7 +176,7 @@ const CountryMap: React.FC<Props> = ({
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: rasterStyle,
-      bounds: countryFeature ? (geoBounds(countryFeature) as any) : undefined,
+      bounds: (fitFeature ?? countryFeature) ? (geoBounds(fitFeature ?? countryFeature) as any) : undefined,
       fitBoundsOptions: { padding: 40, duration: 0 },
       attributionControl: { compact: true },
       maxZoom: 17,
@@ -216,11 +268,35 @@ const CountryMap: React.FC<Props> = ({
         layout: {
           'text-field': '{point_count_abbreviated}',
           'text-size': 12,
-          'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+          'text-font': ['Open Sans Bold'],
           'text-allow-overlap': true,
         },
         paint: {
           'text-color': '#000',
+        },
+      });
+
+      // Facility names once the camera is close enough that dots alone are
+      // meaningless. MapLibre's collision pass hides overlaps, so dense
+      // metros label a few sites and reveal more as you keep zooming.
+      map.addLayer({
+        id: 'datacenter-labels',
+        type: 'symbol',
+        source: 'datacenters',
+        filter: ['!', ['has', 'point_count']],
+        minzoom: 9,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-size': 11,
+          'text-font': ['Open Sans Semibold'],
+          'text-offset': [0, 1.1],
+          'text-anchor': 'top',
+          'text-max-width': 9,
+        },
+        paint: {
+          'text-color': 'rgba(255,255,255,0.92)',
+          'text-halo-color': COLOR_BG,
+          'text-halo-width': 1.4,
         },
       });
 
@@ -249,11 +325,18 @@ const CountryMap: React.FC<Props> = ({
             ['boolean', ['feature-state', 'hover'], false], '#fff',
             COLOR_PRIMARY,
           ],
+          // Grows with zoom: a fixed 5px dot that worked at country scale
+          // was a nearly invisible fleck once the camera was down at street
+          // level. Hover/active add on top so feedback survives every zoom.
           'circle-radius': [
-            'case',
-            ['boolean', ['feature-state', 'active'], false], 8,
-            ['boolean', ['feature-state', 'hover'], false], 7,
-            5,
+            '+',
+            ['interpolate', ['linear'], ['zoom'], 4, 4.5, 9, 6.5, 13, 9, 16, 12],
+            [
+              'case',
+              ['boolean', ['feature-state', 'active'], false], 3,
+              ['boolean', ['feature-state', 'hover'], false], 2,
+              0,
+            ],
           ],
           'circle-stroke-color': COLOR_BG,
           'circle-stroke-width': 2,
@@ -426,7 +509,7 @@ const CountryMap: React.FC<Props> = ({
         layout: {
           'text-field': ['get', 'label'],
           'text-size': 10,
-          'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+          'text-font': ['Open Sans Semibold'],
           'text-offset': [0, 1.4],
           'text-anchor': 'top',
           'text-allow-overlap': false,
@@ -439,8 +522,9 @@ const CountryMap: React.FC<Props> = ({
       });
 
       // Cinematic entry: fit to country bounds with smooth animation.
-      if (countryFeature) {
-        const bbox = geoBounds(countryFeature) as [[number, number], [number, number]];
+      const focus = fitFeature ?? countryFeature;
+      if (focus) {
+        const bbox = geoBounds(focus) as [[number, number], [number, number]];
         map.fitBounds(bbox, { padding: 60, duration: 900, essential: true });
       }
     });
@@ -476,10 +560,11 @@ const CountryMap: React.FC<Props> = ({
 
   // Power plants — filter to country bounds for perf (~hundreds vs ~35,000)
   const plantsGeojson = useMemo<GeoJSON.FeatureCollection>(() => {
-    if (!powerPlants || powerPlants.length === 0 || !countryFeature) {
+    const focus = fitFeature ?? countryFeature;
+    if (!powerPlants || powerPlants.length === 0 || !focus) {
       return { type: 'FeatureCollection', features: [] };
     }
-    const [[minLng, minLat], [maxLng, maxLat]] = geoBounds(countryFeature) as [
+    const [[minLng, minLat], [maxLng, maxLat]] = geoBounds(focus) as [
       [number, number],
       [number, number]
     ];
@@ -504,7 +589,7 @@ const CountryMap: React.FC<Props> = ({
         },
       }));
     return { type: 'FeatureCollection', features };
-  }, [powerPlants, countryFeature]);
+  }, [powerPlants, countryFeature, fitFeature]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -514,10 +599,11 @@ const CountryMap: React.FC<Props> = ({
 
   // Cloud regions — filter to enabled providers, also clipped to country bounds
   const cloudsGeojson = useMemo<GeoJSON.FeatureCollection>(() => {
-    if (!shownClouds || shownClouds.size === 0 || !countryFeature) {
+    const focus = fitFeature ?? countryFeature;
+    if (!shownClouds || shownClouds.size === 0 || !focus) {
       return { type: 'FeatureCollection', features: [] };
     }
-    const [[minLng, minLat], [maxLng, maxLat]] = geoBounds(countryFeature) as [
+    const [[minLng, minLat], [maxLng, maxLat]] = geoBounds(focus) as [
       [number, number],
       [number, number]
     ];
@@ -535,7 +621,7 @@ const CountryMap: React.FC<Props> = ({
         },
       }));
     return { type: 'FeatureCollection', features };
-  }, [shownClouds, countryFeature]);
+  }, [shownClouds, countryFeature, fitFeature]);
 
   useEffect(() => {
     const map = mapRef.current;
